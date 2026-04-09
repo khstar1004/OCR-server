@@ -1,0 +1,255 @@
+{% extends "base.html" %}
+
+{% block body %}
+<header class="hero demo-hero">
+  <div>
+    <p class="eyebrow">Operator Demo</p>
+    <h1>기사 제목, 본문, 이미지를 API처럼 정리해서 확인합니다.</h1>
+    <p class="hero-copy">OCR 결과를 렌더링해서 raw markdown 없이 읽기 쉬운 기사 카드로 보여줍니다.</p>
+  </div>
+  <div class="hero-meta">
+    <span>Recent jobs: {{ jobs|length }}</span>
+    <span>Route: <code>/demo/jobs</code></span>
+    {% if jobs %}
+    <label class="job-picker">
+      <span>작업</span>
+      <select onchange="if (this.value) window.location.href = this.value;">
+        {% for job in jobs %}
+        <option value="/demo/jobs?job_id={{ job.job_key }}&view={{ selected_view }}" {% if job.job_key == selected_job_key %}selected{% endif %}>
+          작업 {{ loop.index }}
+        </option>
+        {% endfor %}
+      </select>
+    </label>
+    {% endif %}
+    {% if selected_job_key %}
+    <form class="job-delete-form" method="post" action="/demo/jobs/{{ selected_job_key }}/delete?view={{ selected_view }}" onsubmit="return confirm('이 작업을 삭제할까요?');">
+      <button class="toolbar-button toolbar-button--danger" type="submit">Delete Job</button>
+    </form>
+    {% endif %}
+  </div>
+</header>
+
+<section class="panel launcher-panel">
+  <div class="launcher-panel-head">
+    <div>
+      <p class="panel-kicker">Run OCR</p>
+      <h2>명령어 없이 여기서 바로 작업을 시작합니다.</h2>
+      <p class="panel-subtitle">폴더 전체 처리와 단일 PDF 처리를 모두 지원합니다. 시작 후 자동으로 해당 job 화면으로 이동합니다.</p>
+    </div>
+  </div>
+
+  <div class="launcher-grid">
+    <form class="launcher-card" method="post" action="/demo/jobs/start-dir" enctype="multipart/form-data">
+      <input type="hidden" name="view" value="{{ selected_view }}">
+      <label class="launcher-field">
+        <span>Folder Upload</span>
+        <input type="file" name="pdf_files" data-upload-input="pdf_files" accept=".pdf,application/pdf" multiple webkitdirectory directory>
+      </label>
+      <div class="launcher-selection is-empty" data-upload-preview="pdf_files" aria-live="polite">
+        <strong>선택 대기</strong>
+        <p>업로드 전 PDF가 없습니다.</p>
+      </div>
+      <p class="launcher-note">브라우저에서 폴더를 직접 선택할 수 있습니다. 폴더 업로드를 쓰지 않으면 아래 경로 입력값을 사용합니다.</p>
+      <label class="launcher-field">
+        <span>Source Directory</span>
+        <input type="text" name="source_dir" value="{{ launch_source_dir }}" placeholder="C:\path\to\news_pdfs">
+      </label>
+      <label class="launcher-field">
+        <span>Delivery URL (/news)</span>
+        <input type="text" name="callback_url" placeholder="http://server/news">
+      </label>
+      <button class="toolbar-button toolbar-button--primary" type="submit">폴더 처리 시작</button>
+    </form>
+
+    <form class="launcher-card" method="post" action="/demo/jobs/start-file" enctype="multipart/form-data">
+      <input type="hidden" name="view" value="{{ selected_view }}">
+      <label class="launcher-field">
+        <span>PDF Upload</span>
+        <input type="file" name="pdf_file" data-upload-input="pdf_file" accept=".pdf,application/pdf">
+      </label>
+      <div class="launcher-selection is-empty" data-upload-preview="pdf_file" aria-live="polite">
+        <strong>선택 대기</strong>
+        <p>업로드 전 PDF가 없습니다.</p>
+      </div>
+      <p class="launcher-note">파일 선택 버튼으로 바로 업로드할 수 있습니다. 선택하지 않으면 아래 경로 입력값을 사용합니다.</p>
+      <label class="launcher-field">
+        <span>PDF Path</span>
+        <input type="text" name="pdf_path" placeholder="C:\path\to\file.pdf">
+      </label>
+      <label class="launcher-field">
+        <span>Delivery URL (/news)</span>
+        <input type="text" name="callback_url" placeholder="http://server/news">
+      </label>
+      <button class="toolbar-button toolbar-button--primary" type="submit">단일 PDF 처리</button>
+    </form>
+  </div>
+</section>
+
+{% include "demo/_jobs_content.html" %}
+
+<script>
+  (() => {
+    const state = window.__demoJobsPageState || (window.__demoJobsPageState = {
+      timerId: null,
+      inFlight: false,
+      observer: null,
+      syncQueued: false,
+    });
+
+    function clearTimer() {
+      if (state.timerId !== null) {
+        window.clearTimeout(state.timerId);
+        state.timerId = null;
+      }
+    }
+
+    function jobsContent() {
+      return document.getElementById("jobs-content");
+    }
+
+    function refreshSeconds() {
+      const target = jobsContent();
+      if (!target) {
+        return 0;
+      }
+      const value = Number(target.dataset.autoRefreshSeconds || "");
+      return Number.isFinite(value) && value > 0 ? value : 0;
+    }
+
+    function selectedEntries(input) {
+      return Array.from(input.files || [])
+        .map((file) => file.webkitRelativePath || file.name || "")
+        .filter((value) => value);
+    }
+
+    function buildSelectionPreview(input) {
+      const target = document.querySelector('[data-upload-preview="' + input.dataset.uploadInput + '"]');
+      if (!target) {
+        return;
+      }
+
+      const entries = selectedEntries(input);
+      target.replaceChildren();
+      target.classList.toggle("is-empty", entries.length === 0);
+
+      const title = document.createElement("strong");
+      const summary = document.createElement("p");
+
+      if (!entries.length) {
+        title.textContent = "선택 대기";
+        summary.textContent = "업로드 전 PDF가 없습니다.";
+        target.append(title, summary);
+        return;
+      }
+
+      const firstEntry = entries[0];
+      const roots = Array.from(
+        new Set(
+          entries
+            .filter((value) => value.includes("/") || value.includes("\\"))
+            .map((value) => value.split(/[\\/]/)[0])
+        )
+      );
+
+      if (roots.length === 1 && entries.length > 1) {
+        title.textContent = roots[0];
+        summary.textContent = "폴더 업로드 · " + entries.length + "개 PDF 선택됨";
+      } else if (entries.length === 1) {
+        title.textContent = firstEntry;
+        summary.textContent = "단일 PDF 업로드 준비 완료";
+      } else {
+        title.textContent = entries.length + "개 PDF 선택됨";
+        summary.textContent = "여러 파일 업로드 준비 완료";
+      }
+
+      target.append(title, summary);
+
+      const list = document.createElement("ul");
+      list.className = "launcher-selection-list";
+      entries.slice(0, 4).forEach((entry) => {
+        const item = document.createElement("li");
+        item.textContent = entry;
+        list.appendChild(item);
+      });
+      if (entries.length > 4) {
+        const extra = document.createElement("li");
+        extra.textContent = "+ " + (entries.length - 4) + " more";
+        list.appendChild(extra);
+      }
+      target.appendChild(list);
+    }
+
+    function refreshAllSelectionPreviews() {
+      document.querySelectorAll("input[type='file'][data-upload-input]").forEach((input) => {
+        buildSelectionPreview(input);
+      });
+    }
+
+    async function refreshJobsContent() {
+      const seconds = refreshSeconds();
+      if (!seconds || state.inFlight) {
+        scheduleJobsRefresh();
+        return;
+      }
+
+      state.inFlight = true;
+      try {
+        const response = await fetch(window.location.pathname + window.location.search, {
+          headers: { "HX-Request": "true" },
+        });
+        if (!response.ok) {
+          return;
+        }
+        const html = await response.text();
+        const target = jobsContent();
+        if (target) {
+          target.outerHTML = html;
+        }
+      } catch (error) {
+        console.warn("jobs refresh failed", error);
+      } finally {
+        state.inFlight = false;
+        queueSync();
+      }
+    }
+
+    function scheduleJobsRefresh() {
+      clearTimer();
+      const seconds = refreshSeconds();
+      if (!seconds) {
+        return;
+      }
+      state.timerId = window.setTimeout(refreshJobsContent, seconds * 1000);
+    }
+
+    function queueSync() {
+      if (state.syncQueued) {
+        return;
+      }
+      state.syncQueued = true;
+      window.requestAnimationFrame(() => {
+        state.syncQueued = false;
+        refreshAllSelectionPreviews();
+        scheduleJobsRefresh();
+      });
+    }
+
+    if (!state.observer) {
+      state.observer = new MutationObserver(() => {
+        queueSync();
+      });
+      state.observer.observe(document.body, { childList: true, subtree: true });
+      document.addEventListener("change", (event) => {
+        const input = event.target.closest("input[type='file'][data-upload-input]");
+        if (!input) {
+          return;
+        }
+        buildSelectionPreview(input);
+      });
+    }
+
+    queueSync();
+  })();
+</script>
+{% endblock %}

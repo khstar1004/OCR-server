@@ -1,0 +1,48 @@
+# Open Source Intake List
+
+## Version basis
+
+- Installed exact version: running Docker runtime container `a-cong-ocr:chandra`
+- Image/runtime basis: `Ubuntu 22.04.4 LTS`, `Python 3.10.12`
+- Pinned build basis: `Dockerfile`, `docker-compose.yml`, `requirements.txt`
+- vLLM basis: running container `vllm/vllm-openai:v0.17.0`
+- Model metadata basis: `news_models/chandra-ocr-2/.cache/huggingface/download/*.metadata`
+- GUI basis: local Python `C:\Users\USER\AppData\Local\Programs\Python\Python312\python.exe`
+
+## Notes
+
+- `PyTorch` and `TorchVision` are installed in the current runtime container as `2.6.0+cu124` and `0.21.0+cu124`.
+- `FastAPI`, `PyMuPDF`, `transformers`, `accelerate`, `NumPy`, `orjson`, and `python-multipart` are fixed to the versions actually installed in the current runtime container on 2026-04-03.
+- `Chandra OCR` runtime package version is `0.2.0`, while the build input is pinned in `requirements.txt` to commit `01f86ebd3a9eef07aa69734008a86541f206456e`.
+- `Chandra OCR 2 Model` local snapshot revision is identified from Hugging Face download metadata as `808e4613421aad847f44b9383e49201fb8dd1175`.
+- `PyQt6` is not installed in the current Docker runtime, but it is installed in the current local GUI environment as `6.10.2`.
+
+| 반입자료명 | 버전 | 라이선스 | 출처 | 운용망 | 용도 | 주요기능 |
+|---|---|---|---|---|---|---|
+| FastAPI | 0.135.3 | MIT | https://github.com/fastapi/fastapi | 국방망, 단독망, 인터넷 | OCR 서버 구축/운영용 | REST API, 데모 UI, 파일 업로드/작업 실행 엔드포인트 제공 |
+| Uvicorn | 0.42.0 | BSD-3-Clause | https://github.com/Kludex/uvicorn | 국방망, 단독망, 인터넷 | OCR 서버 구축/운영용 | ASGI 서버 실행 |
+| SQLAlchemy | 2.0.48 | MIT | https://www.sqlalchemy.org | 국방망, 단독망, 인터넷 | OCR 서버 구축/운영용 | DB ORM, 세션 관리, 질의 처리 |
+| psycopg[binary] | 3.3.3 | LGPL-3.0-only | https://psycopg.org/ | 국방망, 단독망, 인터넷 | OCR 서버 구축/운영용 | PostgreSQL 연동 지원 |
+| Pydantic | 2.12.5 | MIT | https://github.com/pydantic/pydantic | 국방망, 단독망, 인터넷 | OCR 서버 구축/운영용 | 요청/응답 스키마 검증 |
+| pydantic-settings | 2.13.1 | MIT | https://github.com/pydantic/pydantic-settings | 국방망, 단독망, 인터넷 | OCR 서버 구축/운영용 | 환경변수 기반 설정 관리 |
+| httpx | 0.28.1 | BSD-3-Clause | https://github.com/encode/httpx | 국방망, 단독망, 인터넷 | OCR 서버 구축/운영용 | 내부/외부 OCR 및 콜백 HTTP 호출 |
+| pypdfium2 | 4.30.0 | (Apache-2.0 OR BSD-3-Clause) AND LicenseRef-PdfiumThirdParty | https://github.com/pypdfium2-team/pypdfium2 | 국방망, 단독망, 인터넷 | OCR 서버 구축/운영용 | PDF 페이지 래스터라이징 |
+| PyMuPDF | 1.27.2.2 | AGPL-3.0-or-later OR Commercial | https://github.com/pymupdf/PyMuPDF | 국방망, 단독망, 인터넷 | OCR 서버 구축/운영용 | PDF 열기/렌더링 및 페이지 분석 |
+| Pillow | 11.3.0 | MIT-CMU | https://python-pillow.github.io | 국방망, 단독망, 인터넷 | OCR 서버 구축/운영용 | 이미지 입출력, 전처리, 미리보기 생성 |
+| NumPy | 2.2.6 | BSD-3-Clause | https://numpy.org | 국방망, 단독망, 인터넷 | OCR 서버 구축/운영용 | 배열/수치 기반 이미지 데이터 처리 |
+| python-multipart | 0.0.22 | Apache-2.0 | https://github.com/Kludex/python-multipart | 국방망, 단독망, 인터넷 | OCR 서버 구축/운영용 | multipart/form-data 업로드 파싱 |
+| Jinja2 | 3.1.6 | BSD-3-Clause | https://github.com/pallets/jinja | 국방망, 단독망, 인터넷 | OCR 서버 구축/운영용 | 데모 UI HTML 템플릿 렌더링 |
+| python-dateutil | 2.9.0.post0 | Apache-2.0 AND BSD-3-Clause | https://github.com/dateutil/dateutil | 국방망, 단독망, 인터넷 | OCR 서버 구축/운영용 | 날짜/시간 보조 처리 |
+| python-slugify | 8.0.4 | MIT | https://github.com/un33k/python-slugify | 국방망, 단독망, 인터넷 | OCR 서버 구축/운영용 | 기사/산출물 경로용 슬러그 생성 |
+| orjson | 3.11.8 | MPL-2.0 AND (Apache-2.0 OR MIT) | https://github.com/ijl/orjson | 국방망, 단독망, 인터넷 | OCR 서버 구축/운영용 | 고속 JSON 직렬화/역직렬화 |
+| Alembic | 1.18.4 | MIT | https://alembic.sqlalchemy.org | 국방망, 단독망, 인터넷 | OCR 서버 구축/운영용 | DB 스키마 마이그레이션 |
+| huggingface_hub | 1.8.0 | Apache-2.0 | https://github.com/huggingface/huggingface_hub | 국방망, 단독망, 인터넷 | OCR 서버 구축/운영용 | 모델 다운로드 및 캐시 관리 |
+| transformers | 5.5.0 | Apache-2.0 | https://github.com/huggingface/transformers | 국방망, 단독망, 인터넷 | OCR 모델 구동용 | Chandra HF 모델 로드/추론 |
+| accelerate | 1.13.0 | Apache-2.0 | https://github.com/huggingface/accelerate | 국방망, 단독망, 인터넷 | OCR 모델 구동용 | 모델 디바이스 배치 및 가속 지원 |
+| PyTorch | 2.6.0+cu124 | BSD-3-Clause | https://github.com/pytorch/pytorch | 국방망, 단독망, 인터넷 | OCR 모델 구동용 | 딥러닝 추론 런타임 |
+| TorchVision | 0.21.0+cu124 | BSD-3-Clause | https://github.com/pytorch/vision | 국방망, 단독망, 인터넷 | OCR 모델 구동용 | 비전 전처리 및 이미지 모델 보조 기능 |
+| Chandra OCR | 0.2.0 (build pin: git@01f86ebd3a9eef07aa69734008a86541f206456e) | Apache-2.0 | https://github.com/datalab-to/chandra | 국방망, 단독망, 인터넷 | OCR 모델 구동용 | OCR 엔진 코드 및 vLLM/HF 추론 래퍼 |
+| Chandra OCR 2 Model | chandra-ocr-2@808e4613421aad847f44b9383e49201fb8dd1175 | Modified OpenRAIL-M | https://huggingface.co/datalab-to/chandra-ocr-2 | 국방망, 단독망, 인터넷 | OCR 모델 구동용 | 신문/문서 이미지에서 레이아웃 보존 OCR 수행 |
+| vLLM | 0.17.0 | Apache-2.0 | https://github.com/vllm-project/vllm | 국방망, 단독망, 인터넷 | 원격 OCR 서비스 구성용 | OpenAI 호환 추론 서버 구동 |
+| PyQt6 | 6.10.2 | GPL-3.0-only OR Commercial | https://www.riverbankcomputing.com/software/pyqt/ | 국방망, 단독망, 인터넷 | GUI 도구 운용용 | 라벨링 도구 및 대시보드 GUI |
+| pytest | 9.0.2 | MIT | https://docs.pytest.org/en/latest/ | 국방망, 단독망, 인터넷 | 테스트/검증용 | 자동 테스트 실행 |

@@ -1,0 +1,140 @@
+services:
+  app:
+    image: ${APP_IMAGE:-a-cong-ocr:chandra}
+    gpus: all
+    ports:
+      - "${API_HOST_PORT:-18007}:8000"
+    environment:
+      APP_ENV: docker
+      API_PREFIX: ${API_PREFIX:-/api/v1}
+      WATCH_DIR: /data/watch
+      DATA_DIR: /data/runtime
+      DATABASE_URL: sqlite:////data/runtime/db/news_ocr.db
+      AUTO_CREATE_TABLES: "true"
+      INPUT_ROOT: /data/watch
+      OUTPUT_ROOT: /data/runtime/output
+      MODELS_ROOT: /models
+      OCR_BACKEND: ${OCR_BACKEND:-chandra}
+      OCR_SERVICE_URL: ${OCR_SERVICE_URL:-http://ocr-service:8000}
+      OCR_SERVICE_MODE: ${OCR_SERVICE_MODE:-native}
+      OCR_SERVICE_API_KEY: ${OCR_SERVICE_API_KEY-}
+      OCR_SERVICE_TIMEOUT_SEC: ${OCR_SERVICE_TIMEOUT_SEC:-300.0}
+      OCR_SERVICE_POLL_INTERVAL_SEC: ${OCR_SERVICE_POLL_INTERVAL_SEC:-2.0}
+      OCR_SERVICE_MARKER_MODE: ${OCR_SERVICE_MARKER_MODE:-accurate}
+      OCR_OFFLINE: ${OCR_OFFLINE:-true}
+      OCR_DEVICE: ${OCR_DEVICE:-gpu}
+      OCR_RETRY_LOW_QUALITY: ${OCR_RETRY_LOW_QUALITY:-true}
+      OCR_QUALITY_MIN_CHARS: ${OCR_QUALITY_MIN_CHARS:-80}
+      OCR_QUALITY_MIN_KOREAN_RATIO: ${OCR_QUALITY_MIN_KOREAN_RATIO:-0.35}
+      PDF_RENDER_DPI: ${PDF_RENDER_DPI:-300}
+      CHANDRA_METHOD: ${CHANDRA_METHOD:-hf}
+      CHANDRA_MODEL_ID: ${CHANDRA_MODEL_ID:-datalab-to/chandra-ocr-2}
+      CHANDRA_MODEL_DIR: ${CHANDRA_MODEL_DIR:-/models/chandra-ocr-2}
+      CHANDRA_PROMPT_TYPE: ${CHANDRA_PROMPT_TYPE:-ocr_layout}
+      CHANDRA_BATCH_SIZE: ${CHANDRA_BATCH_SIZE:-1}
+      CHANDRA_DEVICE_MAP: ${CHANDRA_DEVICE_MAP:-auto}
+      CHANDRA_DTYPE: ${CHANDRA_DTYPE:-bfloat16}
+      VLLM_API_BASE: ${VLLM_API_BASE:-http://vllm-ocr:8000/v1}
+      VLLM_MODEL_NAME: ${VLLM_MODEL_NAME:-chandra-ocr-2}
+      MAX_VLLM_RETRIES: ${MAX_VLLM_RETRIES:-6}
+      HF_HOME: /opt/model-cache/huggingface
+      DEMO_REDELIVER_HOOK: ${DEMO_REDELIVER_HOOK:-}
+      ARTICLE_REDELIVER_HOOK: ${ARTICLE_REDELIVER_HOOK:-}
+      CALLBACK_TIMEOUT_SECONDS: ${CALLBACK_TIMEOUT_SECONDS:-30}
+    volumes:
+      - ${WATCH_DIR:-./news_pdfs}:/data/watch
+      - ${DATA_DIR:-./news_data}:/data/runtime
+      - ${MODELS_DIR:-./news_models}:/models
+      - ${MODEL_CACHE_DIR:-./model_cache}:/opt/model-cache
+    command: ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    restart: unless-stopped
+
+  ocr-service:
+    image: ${OCR_IMAGE:-a-cong-ocr:chandra}
+    depends_on:
+      vllm-ocr:
+        condition: service_healthy
+    gpus: all
+    ports:
+      - "${OCR_API_HOST_PORT:-18009}:8000"
+    environment:
+      APP_ENV: docker
+      API_PREFIX: ${API_PREFIX:-/api/v1}
+      INPUT_ROOT: /data/input
+      OUTPUT_ROOT: /data/runtime/output
+      MODELS_ROOT: /models
+      OCR_BACKEND: ${OCR_BACKEND:-chandra}
+      OCR_OFFLINE: ${OCR_OFFLINE:-true}
+      OCR_DEVICE: ${OCR_DEVICE:-gpu}
+      OCR_SERVICE_TIMEOUT_SEC: ${OCR_SERVICE_TIMEOUT_SEC:-300.0}
+      OCR_RETRY_LOW_QUALITY: ${OCR_RETRY_LOW_QUALITY:-true}
+      OCR_QUALITY_MIN_CHARS: ${OCR_QUALITY_MIN_CHARS:-80}
+      OCR_QUALITY_MIN_KOREAN_RATIO: ${OCR_QUALITY_MIN_KOREAN_RATIO:-0.35}
+      PDF_RENDER_DPI: ${PDF_RENDER_DPI:-300}
+      CHANDRA_METHOD: ${OCR_SERVICE_CHANDRA_METHOD:-vllm}
+      CHANDRA_MODEL_ID: ${CHANDRA_MODEL_ID:-datalab-to/chandra-ocr-2}
+      CHANDRA_MODEL_DIR: ${CHANDRA_MODEL_DIR:-/models/chandra-ocr-2}
+      CHANDRA_PROMPT_TYPE: ${CHANDRA_PROMPT_TYPE:-ocr_layout}
+      CHANDRA_BATCH_SIZE: ${CHANDRA_BATCH_SIZE:-1}
+      CHANDRA_DEVICE_MAP: ${CHANDRA_DEVICE_MAP:-auto}
+      CHANDRA_DTYPE: ${CHANDRA_DTYPE:-bfloat16}
+      VLLM_API_BASE: ${VLLM_API_BASE:-http://vllm-ocr:8000/v1}
+      VLLM_MODEL_NAME: ${VLLM_MODEL_NAME:-chandra-ocr-2}
+      MAX_VLLM_RETRIES: ${MAX_VLLM_RETRIES:-6}
+      HF_HOME: /opt/model-cache/huggingface
+      OCR_SERVICE_URL: ""
+    volumes:
+      - ${MODELS_DIR:-./news_models}:/models
+      - ${MODEL_CACHE_DIR:-./model_cache}:/opt/model-cache
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=5)
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 20s
+    command: ["python3", "-m", "uvicorn", "app.ocr_service:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  vllm-ocr:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.17.0}
+    gpus: all
+    ipc: host
+    environment:
+      HF_HOME: /root/.cache/huggingface
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-1}
+      TRANSFORMERS_OFFLINE: ${TRANSFORMERS_OFFLINE:-1}
+    volumes:
+      - ${MODELS_DIR:-./news_models}:/models:ro
+      - ${MODEL_CACHE_DIR:-./model_cache}:/root/.cache/huggingface
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=5)
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 60s
+    command:
+      - ${VLLM_MODEL_PATH:-/models/chandra-ocr-2}
+      - --served-model-name
+      - ${VLLM_MODEL_NAME:-chandra-ocr-2}
+      - --dtype
+      - bfloat16
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --max-model-len
+      - ${VLLM_MAX_MODEL_LEN:-18000}
+      - --gpu-memory-utilization
+      - ${VLLM_GPU_MEMORY_UTILIZATION:-0.85}
+      - --enable-prefix-caching
+      - --mm-processor-kwargs
+      - ${VLLM_MM_PROCESSOR_KWARGS:-{\"min_pixels\":3136,\"max_pixels\":6291456}}

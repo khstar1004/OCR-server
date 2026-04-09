@@ -1,0 +1,335 @@
+<div id="jobs-content" data-auto-refresh-seconds="{{ auto_refresh_seconds or '' }}">
+  {% include "demo/_flash.html" %}
+
+  {% if selected_job_detail %}
+  <section class="panel job-overview-panel">
+    <div class="job-overview-head">
+      <div>
+        <p class="panel-kicker">Job Overview</p>
+        <h2>선택된 작업</h2>
+        <p class="panel-subtitle">{{ selected_job_detail.source_dir }}</p>
+      </div>
+      <div class="job-overview-meta">
+        <span class="status-pill status-{{ selected_job_detail.status }}">{{ selected_job_detail.status }}</span>
+        <strong>{{ "%.1f"|format(selected_job_detail.progress_percent) }}%</strong>
+      </div>
+    </div>
+
+    <div class="job-progress-grid">
+      <article class="job-progress-card">
+        <p class="panel-kicker">PDF</p>
+        <strong>{{ selected_job_detail.processed_pdfs }} / {{ selected_job_detail.total_pdfs }}</strong>
+        <p class="panel-subtitle">success {{ selected_job_detail.success_pdfs }} · failed {{ selected_job_detail.failed_pdfs }}</p>
+      </article>
+      <article class="job-progress-card">
+        <p class="panel-kicker">Articles</p>
+        <strong>{{ selected_job_detail.total_articles }}</strong>
+        <p class="panel-subtitle">누적 기사 수</p>
+      </article>
+      <article class="job-progress-card">
+        <p class="panel-kicker">Updated</p>
+        <strong>{% if selected_job_activity and selected_job_activity.stage_label %}{{ selected_job_activity.stage_label }}{% else %}waiting{% endif %}</strong>
+        <p class="panel-subtitle">{% if selected_job_activity and selected_job_activity.message %}{{ selected_job_activity.message }}{% else %}최근 작업 상태{% endif %}</p>
+      </article>
+      {% if selected_job_delivery %}
+      <article class="job-progress-card">
+        <p class="panel-kicker">Delivery</p>
+        <strong>{{ selected_job_delivery.delivered_marks }} / {{ selected_job_delivery.total_articles }}</strong>
+        <p class="panel-subtitle">
+          delivered marks · failed {{ selected_job_delivery.failed_marks }} · pending {{ selected_job_delivery.pending_marks }}
+        </p>
+        {% if selected_job_delivery.response_code or selected_job_delivery.batch_size %}
+        <p class="panel-subtitle">
+          {% if selected_job_delivery.response_code %}HTTP {{ selected_job_delivery.response_code }}{% endif %}
+          {% if selected_job_delivery.batch_size %} · batch {{ selected_job_delivery.batch_size }}{% endif %}
+        </p>
+        {% endif %}
+        {% if selected_job_delivery.endpoint %}
+        <code class="mini-path">{{ selected_job_delivery.endpoint }}</code>
+        {% endif %}
+        {% if selected_job_delivery.note %}
+        <p class="panel-subtitle">{{ selected_job_delivery.note }}</p>
+        {% endif %}
+      </article>
+      {% endif %}
+    </div>
+
+    <div class="job-progress-bar" aria-label="job progress">
+      <span style="width: {{ selected_job_detail.progress_percent }}%;"></span>
+    </div>
+
+    {% if selected_job_detail.stages %}
+    <div class="job-stage-strip">
+      {% for stage in selected_job_detail.stages %}
+      <article class="job-stage-card is-{{ stage.status }}">
+        <div class="job-stage-head">
+          <span class="status-pill status-{{ stage.status }}">{{ stage.status }}</span>
+          <strong>{{ stage.label }}</strong>
+        </div>
+        <p>{{ stage.message or stage.stage_key }}</p>
+      </article>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {% if auto_refresh_seconds %}
+  <section class="panel job-status-banner">
+    <div class="job-status-banner-copy">
+      <p class="panel-kicker">Live Status</p>
+      <strong>선택된 작업</strong>
+      <p class="panel-subtitle">작업 상태가 {{ auto_refresh_seconds }}초마다 자동 갱신됩니다.</p>
+      {% if selected_job_activity %}
+      <div class="job-activity-banner">
+        <span class="status-pill status-{{ selected_job_activity.status }}">{{ selected_job_activity.stage_label or selected_job_activity.stage_key or selected_job_activity.status }}</span>
+        {% if selected_job_activity.pdf_file %}
+        <span>{{ selected_job_activity.pdf_file }}</span>
+        {% endif %}
+        {% if selected_job_activity.page_number %}
+        <span>page {{ selected_job_activity.page_number }}</span>
+        {% endif %}
+        {% if selected_job_activity.message %}
+        <span>{{ selected_job_activity.message }}</span>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+    {% if selected_job_detail %}
+    <div class="job-status-banner-meta">
+      <span class="status-pill status-{{ selected_job_detail.status }}">{{ selected_job_detail.status }}</span>
+      <span>{{ "%.1f"|format(selected_job_detail.progress_percent) }}%</span>
+      <span>articles {{ selected_job_detail.total_articles }}</span>
+    </div>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {% if not article_detail %}
+  <section class="panel empty-panel">
+    {% if selected_job_detail %}
+    <h2>
+      {% if selected_job_detail.status in ["queued", "running"] %}
+      아직 기사 결과가 없습니다. 현재 작업이 진행 중입니다.
+      {% else %}
+      기사 결과가 생성되지 않았습니다.
+      {% endif %}
+    </h2>
+    <p>
+      status {{ selected_job_detail.status }} · progress {{ "%.1f"|format(selected_job_detail.progress_percent) }}%
+    </p>
+
+    <div class="job-progress-grid">
+      <article class="job-progress-card">
+        <p class="panel-kicker">PDF</p>
+        <strong>{{ selected_job_detail.processed_pdfs }} / {{ selected_job_detail.total_pdfs }}</strong>
+        <p class="panel-subtitle">success {{ selected_job_detail.success_pdfs }} · failed {{ selected_job_detail.failed_pdfs }}</p>
+      </article>
+      <article class="job-progress-card">
+        <p class="panel-kicker">Articles</p>
+        <strong>{{ selected_job_detail.total_articles }}</strong>
+        <p class="panel-subtitle">완료된 기사 수</p>
+      </article>
+      <article class="job-progress-card">
+        <p class="panel-kicker">Source</p>
+        <strong>{{ selected_job_summary.total_pdfs if selected_job_summary else selected_job_detail.total_pdfs }}</strong>
+        <p class="panel-subtitle">{{ selected_job_detail.source_dir }}</p>
+      </article>
+    </div>
+
+    <div class="job-progress-bar" aria-label="job progress">
+      <span style="width: {{ selected_job_detail.progress_percent }}%;"></span>
+    </div>
+
+    {% if selected_job_detail.pdf_files %}
+    <div class="job-pdf-status-list">
+      {% for pdf in selected_job_detail.pdf_files %}
+      <article class="job-pdf-status-card">
+        <div class="article-strip-head">
+          <span>{{ pdf.file_name }}</span>
+          <span class="status-pill status-{{ pdf.status }}">{{ pdf.status }}</span>
+        </div>
+        <p class="panel-subtitle">
+          pages {{ pdf.parsed_pages }} parsed / {{ pdf.page_count }} total · failed {{ pdf.failed_pages }} · articles {{ pdf.article_count }}
+        </p>
+        {% if pdf.skip_reason %}
+        <p class="panel-subtitle">{{ pdf.skip_reason }}</p>
+        {% endif %}
+      </article>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if selected_job_detail.recent_logs %}
+    <div class="job-log-panel">
+      <p class="panel-kicker">Recent Logs</p>
+      <div class="job-log-list">
+        {% for log in selected_job_detail.recent_logs[:10] %}
+        <article class="job-log-entry">
+          <div class="job-log-meta">
+            <span class="status-pill status-{{ log.status }}">{{ log.step_name }}</span>
+            <span>{{ log.created_at }}</span>
+            {% if log.page_number %}
+            <span>page {{ log.page_number }}</span>
+            {% endif %}
+          </div>
+          <p>{{ log.message }}</p>
+        </article>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+    {% else %}
+    <h2>표시할 기사 데이터가 없습니다.</h2>
+    <p>작업을 선택하면 원문 페이지와 렌더링 결과가 표시됩니다.</p>
+    {% endif %}
+  </section>
+  {% else %}
+  <main class="workspace-grid">
+    <section class="workspace-panel preview-panel">
+      <div class="panel-heading panel-heading--dense">
+        <div>
+          <p class="panel-kicker">Selected File</p>
+          <h2>{{ article_detail.pdf_file }}</h2>
+          <p class="panel-subtitle">page {{ article_detail.page_number }} · article {{ "%02d"|format(article_detail.article_order) }}</p>
+        </div>
+        <span class="status-pill status-{{ article_detail.preview_page_status }}">{{ article_detail.preview_page_status }}</span>
+      </div>
+
+      {% if article_detail.preview_page_total > 1 %}
+      <div class="preview-nav">
+        <div class="preview-nav-actions">
+          {% if article_detail.preview_previous_page_id %}
+          {% set preview_previous_url = "/demo/jobs?job_id=" ~ article_detail.job_key ~ "&article_id=" ~ (article_detail.preview_previous_page_article_id or article_detail.article_id) ~ "&view=" ~ selected_view ~ (("&page_id=" ~ article_detail.preview_previous_page_id) if not article_detail.preview_previous_page_article_id else "") %}
+          <a
+            class="toolbar-button"
+            href="{{ preview_previous_url }}"
+            hx-get="{{ preview_previous_url }}"
+            hx-target="{{ jobs_content_target }}"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+          >Prev</a>
+          {% else %}
+          <span class="toolbar-button toolbar-button--disabled" aria-disabled="true">Prev</span>
+          {% endif %}
+
+          <span class="preview-page-indicator">
+            Page {{ article_detail.preview_page_number }} · {{ article_detail.preview_page_index + 1 }}/{{ article_detail.preview_page_total }}
+          </span>
+
+          {% if article_detail.preview_next_page_id %}
+          {% set preview_next_url = "/demo/jobs?job_id=" ~ article_detail.job_key ~ "&article_id=" ~ (article_detail.preview_next_page_article_id or article_detail.article_id) ~ "&view=" ~ selected_view ~ (("&page_id=" ~ article_detail.preview_next_page_id) if not article_detail.preview_next_page_article_id else "") %}
+          <a
+            class="toolbar-button"
+            href="{{ preview_next_url }}"
+            hx-get="{{ preview_next_url }}"
+            hx-target="{{ jobs_content_target }}"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+          >Next</a>
+          {% else %}
+          <span class="toolbar-button toolbar-button--disabled" aria-disabled="true">Next</span>
+          {% endif %}
+        </div>
+
+        <div class="preview-page-strip" aria-label="pdf pages">
+          {% for preview_page in article_detail.preview_pages %}
+          {% set preview_page_url = "/demo/jobs?job_id=" ~ article_detail.job_key ~ "&article_id=" ~ (preview_page.article_id or article_detail.article_id) ~ "&view=" ~ selected_view ~ (("&page_id=" ~ preview_page.page_id) if not preview_page.article_id else "") %}
+          <a
+            class="preview-page-chip {% if preview_page.is_current %}is-current{% endif %} {% if preview_page.has_selected_article %}has-selected-article{% endif %}"
+            href="{{ preview_page_url }}"
+            hx-get="{{ preview_page_url }}"
+            hx-target="{{ jobs_content_target }}"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+          >
+            <strong>{{ preview_page.page_number }}</strong>
+            <small>{{ preview_page.status }} · {{ preview_page.article_count }} articles</small>
+          </a>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      <div class="preview-frame" style="--page-width: {{ article_detail.preview_page_width }}; --page-height: {{ article_detail.preview_page_height }};">
+        <img src="{{ article_detail.preview_page_image_url }}" alt="page {{ article_detail.preview_page_number }}">
+        <div class="overlay-layer">
+          {% for box in article_detail.preview_overlay_boxes %}
+          <span
+            class="overlay-box label-{{ box.label }} {% if box.selected %}is-selected{% endif %} {% if box.muted %}is-muted{% endif %}"
+            style="{{ box.style }}"
+            title="{{ box.text|striptags if box.text else box.label }}"
+          ></span>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="preview-summary">
+        <div>
+          <p class="panel-kicker">기사 제목</p>
+          <strong>{{ article_detail.title|striptags or article_detail.corrected_title|striptags or "Untitled" }}</strong>
+        </div>
+        <div class="preview-summary-actions">
+          <p class="panel-subtitle">preview page {{ article_detail.preview_page_number }} · selected article page {{ article_detail.page_number }} · confidence {{ "%.3f"|format(article_detail.confidence) }}</p>
+          <div class="preview-summary-buttons">
+          {% if article_detail.preview_previous_page_id %}
+          <a
+            class="toolbar-button"
+            href="{{ preview_previous_url }}"
+            hx-get="{{ preview_previous_url }}"
+            hx-target="{{ jobs_content_target }}"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+          >Prev Page</a>
+          {% endif %}
+          {% if article_detail.preview_next_page_id %}
+          <a
+            class="toolbar-button toolbar-button--primary"
+            href="{{ preview_next_url }}"
+            hx-get="{{ preview_next_url }}"
+            hx-target="{{ jobs_content_target }}"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+          >Next Page</a>
+          {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <div class="article-strip">
+        {% for pdf in job_browser %}
+        <div class="article-strip-file">
+          <div class="article-strip-head">
+            <span>{{ pdf.file_name }}</span>
+            <span class="status-pill status-{{ pdf.status }}">{{ pdf.status }}</span>
+          </div>
+          <div class="article-chip-row">
+            {% for page in pdf.pages %}
+              {% for article in page.articles %}
+              {% set article_url = "/demo/jobs?job_id=" ~ article_detail.job_key ~ "&article_id=" ~ article.article_id ~ "&view=" ~ selected_view %}
+              <a
+                class="article-chip {% if article_detail.article_id == article.article_id %}is-selected{% endif %}"
+                href="{{ article_url }}"
+                hx-get="{{ article_url }}"
+                hx-target="{{ jobs_content_target }}"
+                hx-swap="outerHTML"
+                hx-push-url="true"
+              >
+                <span class="article-chip-order">A{{ "%02d"|format(article.article_order) }}</span>
+                <strong>{{ article.title|striptags }}</strong>
+                <small>{{ article.delivery_status }}</small>
+              </a>
+              {% endfor %}
+            {% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section id="article-panel" class="workspace-panel result-panel">
+      {% include "demo/_article_detail.html" %}
+    </section>
+  </main>
+  {% endif %}
+</div>

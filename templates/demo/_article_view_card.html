@@ -1,0 +1,96 @@
+{% set is_selected_article = detail_item.article_id == article_detail.article_id %}
+{% if jobs_content_target %}
+{% set detail_url = "/demo/jobs?job_id=" ~ detail_item.job_key ~ "&article_id=" ~ detail_item.article_id ~ "&view=" ~ selected_view %}
+{% else %}
+{% set detail_url = "/demo/articles/" ~ detail_item.article_id ~ "?view=" ~ selected_view %}
+{% endif %}
+
+<article class="result-card page-article-card {% if is_selected_article %}is-selected{% endif %}">
+  <div class="page-article-head">
+    <div class="page-article-copy">
+      <div class="block-label">ARTICLE {{ "%02d"|format(detail_item.article_order) }}</div>
+      <h2>{{ detail_item.title|striptags or detail_item.corrected_title|striptags or "Untitled" }}</h2>
+      {% if detail_item.corrected_title and detail_item.corrected_title != detail_item.title %}
+      <p class="detail-subtitle">교정 제목: {{ detail_item.corrected_title|striptags }}</p>
+      {% endif %}
+      <p class="detail-subtitle">{{ detail_item.pdf_file }} · page {{ detail_item.page_number }}</p>
+    </div>
+
+    <div class="page-article-meta">
+      {% if is_selected_article %}
+      <span class="metric-pill">selected</span>
+      {% endif %}
+      <span class="status-pill status-{{ detail_item.delivery_status }}">{{ detail_item.delivery_status }}</span>
+      {% if detail_item.relevance_score is not none %}
+      <span class="metric-pill">score {{ "%.3f"|format(detail_item.relevance_score) }}</span>
+      {% endif %}
+      {% if jobs_content_target and not is_selected_article %}
+      <a
+        class="toolbar-button"
+        href="{{ detail_url }}"
+        hx-get="{{ detail_url }}"
+        hx-target="{{ jobs_content_target }}"
+        hx-swap="outerHTML"
+        hx-push-url="true"
+      >Focus</a>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if selected_view == "json" %}
+  <div class="page-article-info">
+    <span>/news payload</span>
+    <span>{{ detail_item.delivery_request_source }}</span>
+    {% if detail_item.delivery_response_code %}
+    <span>HTTP {{ detail_item.delivery_response_code }}</span>
+    {% endif %}
+  </div>
+  <pre class="code-block json-view">{{ detail_item.delivery_request_text|e }}</pre>
+  <div class="page-article-info">
+    <span>operator payload</span>
+  </div>
+  <pre class="code-block json-view">{{ detail_item.article_payload_text|e }}</pre>
+  {% elif selected_view == "markdown" %}
+  <pre class="code-block">{{ detail_item.article_markdown_text|e }}</pre>
+  {% else %}
+  <div class="page-article-info">
+    <span>confidence {{ "%.3f"|format(detail_item.confidence) }}</span>
+    {% if detail_item.article_bbox %}
+    <span>bbox {{ detail_item.article_bbox }}</span>
+    {% endif %}
+    {% if detail_item.relevance_reason %}
+    <span>{{ detail_item.relevance_reason }}</span>
+    {% endif %}
+  </div>
+
+  <div class="markdown-body">
+    {% if detail_item.article_body_html %}
+      {{ detail_item.article_body_html|safe }}
+    {% else %}
+      <div class="empty-inline">본문을 렌더링할 수 없습니다.</div>
+    {% endif %}
+  </div>
+
+  {% if detail_item.images %}
+  <div class="image-strip image-strip-large">
+    {% for image in detail_item.images %}
+    <figure class="image-card image-card-large page-article-image-card">
+      <img
+        src="{{ image.image_url }}"
+        alt="article image {{ image.image_id }}"
+        width="{{ image.width }}"
+        height="{{ image.height }}"
+        loading="lazy"
+      >
+      <figcaption>
+        <div>#{{ image.image_id }} · {{ image.width }}×{{ image.height }} · bbox {{ image.bbox }}</div>
+        {% for caption in image.captions %}
+        <div class="image-caption-text">{{ caption.text }}</div>
+        {% endfor %}
+      </figcaption>
+    </figure>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% endif %}
+</article>

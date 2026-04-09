@@ -1,0 +1,173 @@
+# OCR 빠른 체감 가이드
+
+이 저장소는 이제 `Chandra OCR`만 사용합니다. 가장 빨리 결과를 체감하는 방법은 PDF 한 개를 넣고, 데모 UI에서 페이지 박스와 기사 결과를 같이 보는 방식입니다.
+
+## 1. 준비
+
+기본 PDF 입력 폴더는 [news_pdfs](C:\Users\USER\Desktop\a-cong-OCR-V2\news_pdfs) 입니다.
+
+```powershell
+Copy-Item .env.example .env
+docker compose up --build
+```
+
+기본 확인값:
+
+- `OCR_BACKEND=chandra`
+- `CHANDRA_METHOD=hf`
+- `CHANDRA_MODEL_ID=datalab-to/chandra-ocr-2`
+- `API_HOST_PORT=18007`
+- `OCR_SERVICE_TIMEOUT_SEC=300.0`
+
+기본 compose 실행은 app 내부의 로컬 Chandra OCR만 사용합니다. 별도 OCR API 컨테이너가 필요할 때만 `remote-ocr` 프로필을 올립니다.
+
+app가 vLLM 서버를 직접 쓰는 2컨테이너 구성이 필요하면 아래처럼 둡니다.
+
+- `.env`에서 `OCR_SERVICE_URL=` 로 비움
+- `.env`에서 `CHANDRA_METHOD=vllm`
+- 실행: `docker compose --profile vllm up --build`
+
+이 경우 런타임은 `app + vllm-ocr` 입니다.
+
+외부 OCR 모델 서버를 붙일 때:
+
+- `.env`에 `OCR_SERVICE_URL=http://<OCR_IP>:8000` 또는 `http://<OCR_IP>:8000/api/v1`
+- 같은 compose 안의 `remote-ocr` 프로필을 쓰면 `OCR_SERVICE_URL=http://ocr-service:8000`
+- 필요하면 `OCR_SERVICE_MODE`, `OCR_SERVICE_API_KEY`, `OCR_SERVICE_MARKER_MODE` 도 함께 설정
+
+데모사이트와 유사한 상위 변환 파이프라인을 붙일 때:
+
+- `OCR_SERVICE_MODE=datalab_marker`
+- `OCR_SERVICE_URL=https://<your-datalab-host>` 또는 `https://<your-datalab-host>/api/v1/marker`
+- `OCR_SERVICE_API_KEY=<key>`
+- `OCR_SERVICE_MARKER_MODE=accurate`
+
+## 2. 가장 빠른 체감 방법
+
+### 방법 A. PDF 한 개만 바로 실행
+
+```powershell
+Invoke-WebRequest `
+  -Method Post `
+  -InFile .\sample.pdf `
+  -ContentType "application/pdf" `
+  -Uri "http://127.0.0.1:18007/api/v1/jobs/run-single?file_name=sample.pdf&force_reprocess=true"
+```
+
+응답에서 받은 `job_id`로 상태를 확인합니다.
+
+```powershell
+Invoke-WebRequest "http://127.0.0.1:18007/api/v1/jobs/<job_id>/detail"
+Invoke-WebRequest "http://127.0.0.1:18007/api/v1/jobs/<job_id>/result"
+```
+
+### 방법 B. 데모 UI에서 결과 보기
+
+브라우저:
+
+```text
+http://127.0.0.1:18007/demo/jobs
+```
+
+### OCR 전용 서비스 사용
+
+필요할 때만 아래처럼 OCR 전용 프로필을 같이 올립니다. 이 프로필은 `ocr-service`와 공식 `vllm-ocr` 컨테이너를 함께 띄웁니다.
+
+```powershell
+docker compose --profile remote-ocr up --build
+```
+
+OCR 전용 컨테이너는 `http://127.0.0.1:18009/api/v1/ocr/*`로 호출합니다.
+
+구성 요약:
+
+- `app`: 메인 서비스
+- `ocr-service`: 현재 OCR API 계약을 유지하는 어댑터
+- `vllm-ocr`: 공식 `vllm/vllm-openai:v0.17.0` 이미지로 Chandra 모델 호스팅
+- `MODELS_DIR`는 `/models`로, `MODEL_CACHE_DIR`는 `/root/.cache/huggingface`로 마운트됩니다.
+
+PowerShell 예시:
+
+```powershell
+curl.exe -X POST http://127.0.0.1:18009/api/v1/ocr/image `
+  -F "file=@image.png" `
+  -F "page_number=1"
+
+curl.exe -X POST http://127.0.0.1:18009/api/v1/ocr/pdf `
+  -F "file=@sample.pdf" `
+  -F "dpi=300"
+```
+
+Datalab 호환 제출/조회 패턴 예시:
+
+```powershell
+curl.exe -X POST http://127.0.0.1:18009/api/v1/ocr `
+  -F "file=@image.png"
+
+curl.exe http://127.0.0.1:18009/api/v1/ocr/<request_id>
+
+curl.exe -X POST http://127.0.0.1:18009/api/v1/marker `
+  -F "file=@sample.pdf" `
+  -F "output_format=json"
+
+curl.exe http://127.0.0.1:18009/api/v1/marker/<request_id>
+```
+
+파일/문서/배치/추출까지 포함한 국방망 운영 가이드는 [docs/defense_network_ocr_guide.md](docs/defense_network_ocr_guide.md) 를 참고하면 됩니다.
+
+여기서 바로 확인할 수 있는 것:
+
+- 최근 작업 목록
+- 페이지별 박스 오버레이
+- 기사 제목/본문
+- 기사 crop 이미지
+- raw OCR payload
+
+### 방법 C. PyQt GUI로 보기
+
+```powershell
+pip install -r requirements-gui.txt
+python -m app.gui.dashboard
+```
+
+## 3. 결과는 어디서 보나
+
+결과는 `OUTPUT_ROOT_HOST` 아래에 저장됩니다.
+
+대표적으로 확인할 파일:
+
+- `article.md`
+- `article.json`
+- `images/`
+
+OCR 품질을 체감할 때는 아래 네 가지를 같이 보면 됩니다.
+
+- 제목 박스가 정확한지
+- 본문이 기사 단위로 자연스럽게 묶이는지
+- 기사 이미지가 제대로 crop 되는지
+- `article.md`가 후속 시스템에 바로 넘길 수 있는 형태인지
+
+## 4. 추천 사용 순서
+
+1. `docker compose up --build`
+2. PDF 한 개를 `run-single`로 실행
+3. `/demo/jobs`에서 결과 확인
+4. 결과 폴더의 `article.md`, `article.json` 확인
+
+## 5. 자주 막히는 경우
+
+### `CHANDRA_MODEL_DIR`를 못 찾는 경우
+
+모델을 로컬에 미리 내려받았으면 `.env`에 실제 경로를 넣어야 합니다.
+
+### `404`가 나는 경우
+
+예전 이미지가 떠 있을 수 있습니다.
+
+```powershell
+docker compose up --build
+```
+
+### 같은 PDF가 스킵되는 경우
+
+중복 해시 스킵이 있으므로 다시 돌릴 때는 `force_reprocess=true`를 같이 주는 편이 안전합니다.

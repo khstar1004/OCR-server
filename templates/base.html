@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ page_title }} | A-Congress OCR</title>
+  <link rel="stylesheet" href="{{ request.url_for('demo_static', asset_path='demo.css') }}?v=20260402">
+  <script defer src="{{ request.url_for('demo_static', asset_path='htmx-lite.js') }}?v=20260402"></script>
+</head>
+<body>
+  <div class="shell">
+    {% block body %}{% endblock %}
+  </div>
+  <script>
+    async function copyText(value) {
+      if (navigator.clipboard && window.isSecureContext) {
+        try {
+          await navigator.clipboard.writeText(value);
+          return;
+        } catch (error) {
+          console.warn("clipboard api failed", error);
+        }
+      }
+
+      const textarea = document.createElement("textarea");
+      textarea.value = value;
+      textarea.setAttribute("readonly", "readonly");
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      textarea.style.pointerEvents = "none";
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      try {
+        document.execCommand("copy");
+      } catch (error) {
+        console.warn("fallback copy failed", error);
+      }
+      textarea.remove();
+    }
+
+    document.addEventListener("click", async (event) => {
+      const copyButton = event.target.closest("[data-copy-target]");
+      if (copyButton) {
+        event.preventDefault();
+        const target = document.querySelector(copyButton.dataset.copyTarget);
+        if (!target) {
+          return;
+        }
+        await copyText(target.innerText || target.textContent || "");
+        return;
+      }
+
+      const downloadButton = event.target.closest("[data-download-target]");
+      if (downloadButton) {
+        event.preventDefault();
+        const target = document.querySelector(downloadButton.dataset.downloadTarget);
+        if (!target) {
+          return;
+        }
+        const content = target.innerText || target.textContent || "";
+        const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = downloadButton.dataset.downloadName || "article.txt";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+      }
+    });
+  </script>
+</body>
+</html>

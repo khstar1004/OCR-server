@@ -1,0 +1,77 @@
+{
+  "page_no": 1,
+  "width": 1000,
+  "height": 1400,
+  "pages": [
+    {
+      "page_no": 1,
+      "blocks": [
+        {
+          "id": "headline-left-1",
+          "type": "headline",
+          "bbox": [60, 40, 430, 100],
+          "text": "LOCAL BUDGET TALKS RESUME"
+        },
+        {
+          "id": "paragraph-left-1",
+          "type": "paragraph",
+          "bbox": [60, 112, 430, 192],
+          "text": "City officials returned to budget negotiations after late night committee meetings."
+        },
+        {
+          "id": "paragraph-left-2",
+          "type": "paragraph",
+          "bbox": [60, 204, 430, 292],
+          "text": "Negotiators say transit, housing, and school maintenance remain the biggest unresolved items."
+        },
+        {
+          "id": "headline-right-1",
+          "type": "headline",
+          "bbox": [540, 60, 930, 120],
+          "text": "HARBOR PROJECT MOVES AHEAD"
+        },
+        {
+          "id": "paragraph-right-1",
+          "type": "paragraph",
+          "bbox": [540, 132, 930, 214],
+          "text": "A revised construction plan cleared review, allowing the shoreline reinforcement program to begin."
+        },
+        {
+          "id": "image-right-1",
+          "type": "image",
+          "bbox": [550, 224, 920, 404]
+        },
+        {
+          "id": "caption-right-1",
+          "type": "caption",
+          "bbox": [550, 410, 920, 446],
+          "text": "Crews survey the eastern breakwater before heavy equipment arrives."
+        },
+        {
+          "id": "paragraph-right-2",
+          "type": "paragraph",
+          "bbox": [540, 458, 930, 562],
+          "text": "Engineers expect the first stabilization phase to finish before the summer storm season."
+        },
+        {
+          "id": "headline-left-2",
+          "type": "headline",
+          "bbox": [60, 344, 430, 404],
+          "text": "SCHOOL BOARD DELAYS VOTE"
+        },
+        {
+          "id": "paragraph-left-3",
+          "type": "paragraph",
+          "bbox": [60, 416, 430, 502],
+          "text": "Members postponed the curriculum vote after parents requested more public comment sessions."
+        },
+        {
+          "id": "paragraph-left-4",
+          "type": "paragraph",
+          "bbox": [60, 514, 430, 606],
+          "text": "A revised calendar now includes two hearings and a written feedback period for educators."
+        }
+      ]
+    }
+  ]
+}
