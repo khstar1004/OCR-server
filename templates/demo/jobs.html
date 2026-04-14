@@ -36,6 +36,15 @@
       <p class="panel-kicker">Run OCR</p>
       <h2>명령어 없이 여기서 바로 작업을 시작합니다.</h2>
       <p class="panel-subtitle">폴더 전체 처리와 단일 PDF 처리를 모두 지원합니다. 시작 후 자동으로 해당 job 화면으로 이동합니다.</p>
+      <p class="launcher-note">기사 전달 대상은 클라이언트 입력이 아니라 <code>.env</code>의 <code>TARGET_API_BASE_URL</code>를 사용합니다.</p>
+      <p class="launcher-note">
+        현재 전달 대상:
+        {% if launch_delivery_url %}
+        <code>{{ launch_delivery_url }}</code>
+        {% else %}
+        <strong>미설정</strong>
+        {% endif %}
+      </p>
     </div>
   </div>
 
@@ -55,10 +64,6 @@
         <span>Source Directory</span>
         <input type="text" name="source_dir" value="{{ launch_source_dir }}" placeholder="C:\path\to\news_pdfs">
       </label>
-      <label class="launcher-field">
-        <span>Delivery URL (/news)</span>
-        <input type="text" name="callback_url" placeholder="http://server/news">
-      </label>
       <button class="toolbar-button toolbar-button--primary" type="submit">폴더 처리 시작</button>
     </form>
 
@@ -76,10 +81,6 @@
       <label class="launcher-field">
         <span>PDF Path</span>
         <input type="text" name="pdf_path" placeholder="C:\path\to\file.pdf">
-      </label>
-      <label class="launcher-field">
-        <span>Delivery URL (/news)</span>
-        <input type="text" name="callback_url" placeholder="http://server/news">
       </label>
       <button class="toolbar-button toolbar-button--primary" type="submit">단일 PDF 처리</button>
     </form>

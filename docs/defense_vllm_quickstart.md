@@ -17,7 +17,10 @@ This quickstart is for an offline defense-network deployment using:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\load_offline_images.ps1
-Copy-Item .\.env.defense-vllm.example .\.env
+Copy-Item .\.env.example .\.env
+((Get-Content .\.env) `
+  -replace '^CHANDRA_METHOD=.*$', 'CHANDRA_METHOD=vllm' `
+  -replace '^OCR_SERVICE_URL=.*$', 'OCR_SERVICE_URL=') | Set-Content .\.env
 New-Item -ItemType Directory -Force .\model_cache | Out-Null
 ```
 

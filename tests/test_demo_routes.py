@@ -32,6 +32,7 @@ def _bootstrap_app(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OUTPUT_ROOT", str((tmp_path / "output").resolve()))
     monkeypatch.setenv("MODELS_ROOT", str((tmp_path / "models").resolve()))
     monkeypatch.setenv("CALLBACK_TIMEOUT_SECONDS", "2")
+    monkeypatch.setenv("TARGET_API_BASE_URL", "http://env.test/news")
 
     for name in list(sys.modules):
         if name == "app" or name.startswith("app."):
@@ -328,9 +329,12 @@ def test_demo_jobs_renders_article_detail(tmp_path: Path, monkeypatch) -> None:
     assert "/demo/jobs/start-file" in response.text
     assert "폴더 처리 시작" in response.text
     assert "단일 PDF 처리" in response.text
+    assert "TARGET_API_BASE_URL" in response.text
+    assert "http://env.test/news" in response.text
     assert 'type="file"' in response.text
     assert 'name="pdf_file"' in response.text
     assert 'name="pdf_files"' in response.text
+    assert 'name="callback_url"' not in response.text
     assert 'data-upload-input="pdf_file"' in response.text
     assert 'data-upload-input="pdf_files"' in response.text
     assert 'data-upload-preview="pdf_file"' in response.text

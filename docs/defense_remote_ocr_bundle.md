@@ -8,7 +8,7 @@
 - `dist/vllm-vllm-openai_v0.17.0.tar`
 - `news_models/chandra-ocr-2/`
 - `docker-compose.defense-remote-ocr.yml`
-- `.env.defense-remote-ocr.example`
+- `.env.example`
 - `scripts/load_offline_images.ps1`
 - `scripts/start_defense_remote_ocr.ps1`
 
@@ -24,6 +24,9 @@
 powershell -ExecutionPolicy Bypass -File .\scripts\load_offline_images.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\start_defense_remote_ocr.ps1
 ```
+
+설정은 루트 `.env` 하나만 사용합니다.
+`start_defense_remote_ocr.ps1`는 `.env`가 없을 때 `.env.example`을 복사해 초기화합니다.
 
 ## 서비스 역할
 

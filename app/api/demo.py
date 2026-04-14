@@ -121,6 +121,7 @@ def get_demo_jobs(
         "flash": _safe_flash(level, flash),
         "selected_view": selected_view,
         "launch_source_dir": str(service.settings.input_root),
+        "launch_delivery_url": service.delivery.resolve_target_url(None),
         "jobs_content_target": "#jobs-content",
         "article_view_urls": (
             _build_view_urls(
@@ -226,7 +227,6 @@ def delete_demo_job(
 @router.post("/demo/jobs/start-dir")
 async def start_demo_job_from_dir(
     source_dir: str = Form(default=""),
-    callback_url: str = Form(default=""),
     view: str = Form(default="render"),
     pdf_files: list[UploadFile] | None = File(default=None),
     db: Session = Depends(get_db),
@@ -241,13 +241,11 @@ async def start_demo_job_from_dir(
             job = await service.queue_uploaded_pdf_batch_job(
                 db,
                 files=uploads,
-                callback_url=callback_url,
             )
         else:
             job = await service.queue_source_dir_job(
                 db,
                 source_dir=source_dir,
-                callback_url=callback_url,
             )
         flash = DemoMessage(level="success", text=f"작업을 큐에 넣었습니다: {job.job_key}")
         return _redirect_jobs_response(flash=flash, view=view, job_id=job.job_key)
@@ -258,7 +256,6 @@ async def start_demo_job_from_dir(
 @router.post("/demo/jobs/start-file")
 async def start_demo_job_from_file(
     pdf_path: str = Form(default=""),
-    callback_url: str = Form(default=""),
     view: str = Form(default="render"),
     pdf_file: UploadFile | None = File(default=None),
     db: Session = Depends(get_db),
@@ -269,13 +266,11 @@ async def start_demo_job_from_file(
                 db,
                 filename=pdf_file.filename,
                 content=await pdf_file.read(),
-                callback_url=callback_url,
             )
         else:
             job = await service.queue_single_pdf_job(
                 db,
                 pdf_path=pdf_path,
-                callback_url=callback_url,
             )
         flash = DemoMessage(level="success", text=f"단일 PDF 작업을 큐에 넣었습니다: {job.job_key}")
         return _redirect_jobs_response(flash=flash, view=view, job_id=job.job_key)

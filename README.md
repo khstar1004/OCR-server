@@ -41,6 +41,9 @@ Copy-Item .env.example .env
 docker compose up --build
 ```
 
+프로필별 별도 env 파일은 없습니다.
+실제 수정 대상은 항상 루트의 `.env` 하나입니다.
+
 기본 접속 주소:
 
 - API: `http://127.0.0.1:18007`
@@ -69,6 +72,11 @@ PDF를 [news_pdfs](C:\Users\USER\Desktop\a-cong-OCR-V2\news_pdfs)에 넣은 뒤 
 
 ## 환경 변수
 
+중앙 설정 파일:
+
+- 모든 런타임 설정은 루트 `.env` 하나에서 관리합니다.
+- 새 환경에서는 `.env.example`을 `.env`로 복사한 뒤 `.env`만 수정하면 됩니다.
+
 핵심값:
 
 - `OCR_BACKEND=chandra`
@@ -83,8 +91,9 @@ PDF를 [news_pdfs](C:\Users\USER\Desktop\a-cong-OCR-V2\news_pdfs)에 넣은 뒤 
 
 전송 연동값:
 
-- 데모 UI의 `Delivery URL (/news)` 입력값을 쓰면 작업 완료 후 기사들을 `multipart/form-data`로 해당 URL에 전송합니다.
-- 입력값이 없으면 `.env`의 `TARGET_API_BASE_URL=http://<HOST>` 를 기준으로 `/news`를 붙여 전송할 수 있습니다.
+- 데모 UI에서는 전달 URL을 직접 입력하지 않습니다. 작업 완료 후 기사 전송 대상은 `.env`의 `TARGET_API_BASE_URL` 값을 사용합니다.
+- 현재 기본값은 `TARGET_API_BASE_URL=http://121.153.7.193:8000/news` 입니다.
+- `TARGET_API_BASE_URL`에는 `/news`까지 포함한 전체 endpoint를 넣어도 되고, base host만 넣으면 app가 `/news`를 붙여 전송합니다.
 - 인증이 필요하면 `TARGET_API_TOKEN`, 타임아웃은 `TARGET_API_TIMEOUT_SEC` 를 사용합니다.
 
 ### OCR 서비스 분리 시

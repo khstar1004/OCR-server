@@ -1,5 +1,7 @@
 services:
   app:
+    env_file:
+      - ./.env
     image: ${APP_IMAGE:-a-cong-ocr:chandra}
     build:
       context: .
@@ -59,6 +61,8 @@ services:
 
   ocr-service:
     profiles: ["remote-ocr"]
+    env_file:
+      - ./.env
     image: ${OCR_IMAGE:-a-cong-ocr:chandra}
     depends_on:
       vllm-ocr:

@@ -1,6 +1,6 @@
 param(
     [string]$ComposeFile = ".\\docker-compose.defense-remote-ocr.yml",
-    [string]$EnvTemplate = ".\\.env.defense-remote-ocr.example",
+    [string]$EnvTemplate = ".\\.env.example",
     [switch]$ForceEnvCopy
 )
 

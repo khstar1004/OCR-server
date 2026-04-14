@@ -11,6 +11,9 @@ Copy-Item .env.example .env
 docker compose up --build
 ```
 
+프로필별 별도 env 파일은 쓰지 않습니다.
+항상 루트 `.env` 하나만 수정합니다.
+
 기본 확인값:
 
 - `OCR_BACKEND=chandra`
