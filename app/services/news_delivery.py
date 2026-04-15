@@ -62,10 +62,7 @@ class NewsDeliveryClient:
     def has_default_target(self) -> bool:
         return bool(self.resolve_target_url(None))
 
-    def resolve_target_url(self, target_url: str | None) -> str | None:
-        requested = (target_url or "").strip()
-        if requested:
-            return requested
+    def resolve_target_url(self, _target_url: str | None) -> str | None:
         configured = (self.settings.target_api_base_url or "").strip()
         if not configured:
             return None

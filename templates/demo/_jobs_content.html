@@ -44,9 +44,6 @@
           {% if selected_job_delivery.batch_size %} · batch {{ selected_job_delivery.batch_size }}{% endif %}
         </p>
         {% endif %}
-        {% if selected_job_delivery.endpoint %}
-        <code class="mini-path">{{ selected_job_delivery.endpoint }}</code>
-        {% endif %}
         {% if selected_job_delivery.note %}
         <p class="panel-subtitle">{{ selected_job_delivery.note }}</p>
         {% endif %}

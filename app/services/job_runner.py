@@ -44,7 +44,7 @@ class JobRunner:
             job_key=job_key,
             source_dir=source_dir,
             requested_date=requested_date,
-            callback_url=request.callback_url,
+            callback_url=None,
             force_reprocess=request.force_reprocess,
             status="queued",
         )
@@ -76,14 +76,11 @@ class JobRunner:
             job.finished_at = datetime.now(timezone.utc)
             self.db.commit()
             if job.status in {"completed", "completed_with_errors"} and job.total_articles > 0:
-                target_url = self.delivery.resolve_target_url(job.callback_url)
+                target_url = self.delivery.resolve_target_url(None)
                 if target_url:
                     self._log_and_commit(job.id, None, None, "deliver", "running", f"sending articles to {target_url}")
                     try:
-                        result = self.delivery.deliver_job_result(
-                            build_job_result(self.db, job),
-                            target_url=job.callback_url,
-                        )
+                        result = self.delivery.deliver_job_result(build_job_result(self.db, job))
                         self._log_and_commit(
                             job.id,
                             None,

@@ -121,7 +121,6 @@ def get_demo_jobs(
         "flash": _safe_flash(level, flash),
         "selected_view": selected_view,
         "launch_source_dir": str(service.settings.input_root),
-        "launch_delivery_url": service.delivery.resolve_target_url(None),
         "jobs_content_target": "#jobs-content",
         "article_view_urls": (
             _build_view_urls(

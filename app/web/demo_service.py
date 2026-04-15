@@ -978,7 +978,6 @@ class DemoService:
         }
 
         job = article.page.pdf_file.job  # type: ignore[union-attr]
-        callback_url = job.callback_url if job is not None else None
         hook = self._resolve_redelivery_hook()
 
         try:
@@ -1010,9 +1009,12 @@ class DemoService:
             if delivery_article is None:
                 raise DemoServiceError("article payload not found for redelivery", status_code=404)
 
+            target_url = self.delivery.resolve_target_url(None)
+            if not target_url:
+                raise DemoServiceError("delivery URL is not configured", status_code=409)
+
             self.delivery.deliver_articles(
                 [delivery_article],
-                target_url=callback_url,
                 state_filename="demo_delivery.json",
                 raise_on_failure=True,
             )

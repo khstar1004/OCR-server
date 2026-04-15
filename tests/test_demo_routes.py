@@ -330,7 +330,7 @@ def test_demo_jobs_renders_article_detail(tmp_path: Path, monkeypatch) -> None:
     assert "폴더 처리 시작" in response.text
     assert "단일 PDF 처리" in response.text
     assert "TARGET_API_BASE_URL" in response.text
-    assert "http://env.test/news" in response.text
+    assert "http://env.test/news" not in response.text
     assert 'type="file"' in response.text
     assert 'name="pdf_file"' in response.text
     assert 'name="pdf_files"' in response.text
@@ -778,7 +778,7 @@ def test_demo_jobs_json_view_shows_delivery_request_payload(tmp_path: Path, monk
     assert "operator payload" in response.text
     assert "file_0_0" in response.text
     assert "한겨레" in response.text
-    assert "https://api.test/news" in response.text
+    assert "https://api.test/news" not in response.text
 
 
 def test_news_delivery_client_builds_multipart_request(tmp_path: Path, monkeypatch) -> None:
@@ -834,13 +834,12 @@ def test_news_delivery_client_builds_multipart_request(tmp_path: Path, monkeypat
     client = delivery_module.NewsDeliveryClient()
     result = client.deliver_articles(
         [article_payload, article_without_images],
-        target_url="https://api.test/news",
         state_filename="demo_delivery.json",
         raise_on_failure=True,
     )
 
     assert result.delivered == 2
-    assert captured["url"] == "https://api.test/news"
+    assert captured["url"] == "http://env.test/news"
     assert captured["headers"] == {}
     assert captured["timeout"] == 30.0
     assert captured["files"] == [
