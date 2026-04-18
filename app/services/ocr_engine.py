@@ -228,7 +228,7 @@ class OCREngine:
             "width": str(width),
             "height": str(height),
         }
-        timeout = self.settings.ocr_service_timeout_sec
+        timeout = self._remote_service_timeout()
         with httpx.Client(timeout=timeout) as client:
             with image_path.open("rb") as image_file:
                 response = client.post(
@@ -244,7 +244,7 @@ class OCREngine:
 
     def _request_remote_marker_result(self, image_path: Path) -> Mapping[str, Any]:
         service_url = self._resolve_ocr_service_url(service_kind="marker")
-        timeout = self.settings.ocr_service_timeout_sec
+        timeout = self._remote_service_timeout()
         headers = self._remote_service_headers()
         request_data = {
             "output_format": "json",
@@ -289,6 +289,23 @@ class OCREngine:
                     error_message = str(result.get("error") or "remote Datalab Marker conversion failed")
                     raise ValueError(error_message)
                 time.sleep(max(float(self.settings.ocr_service_poll_interval_sec or 0.5), 0.1))
+
+    def _remote_service_timeout(self) -> httpx.Timeout:
+        raw_timeout = float(self.settings.ocr_service_timeout_sec or 0.0)
+        if raw_timeout > 0:
+            connect_timeout = min(raw_timeout, 30.0)
+            return httpx.Timeout(
+                connect=connect_timeout,
+                read=raw_timeout,
+                write=raw_timeout,
+                pool=connect_timeout,
+            )
+        return httpx.Timeout(
+            connect=30.0,
+            read=None,
+            write=None,
+            pool=30.0,
+        )
 
     def _parse_remote_layout(
         self,

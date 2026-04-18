@@ -7,6 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from PIL import Image
 
@@ -135,7 +136,8 @@ async def ocr_image(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unable to resolve image dimensions")
 
         engine = _get_ocr_engine(request)
-        layout = engine.parse_page(
+        layout = await run_in_threadpool(
+            engine.parse_page,
             image_path=image_path,
             page_number=page_number,
             width=int(resolved_width),
@@ -176,7 +178,8 @@ async def ocr_pdf(
         engine = _get_ocr_engine(request)
         pages: list[dict[str, Any]] = []
         for page in rendered.pages:
-            layout = engine.parse_page(
+            layout = await run_in_threadpool(
+                engine.parse_page,
                 image_path=page.image_path,
                 page_number=page.page_no,
                 width=page.width,

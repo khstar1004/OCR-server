@@ -873,6 +873,84 @@ def test_news_delivery_client_builds_multipart_request(tmp_path: Path, monkeypat
     ]
 
 
+def test_news_delivery_client_sends_empty_caption_for_missing_image_caption(tmp_path: Path, monkeypatch) -> None:
+    ctx = _bootstrap_app(tmp_path, monkeypatch)
+    models = _fresh_import("app.db.models")
+    schemas = _fresh_import("app.schemas.job")
+    result_builder = _fresh_import("app.services.result_builder")
+    delivery_module = _fresh_import("app.services.news_delivery")
+    db = ctx["db"]
+
+    job = db.scalar(select(models.Job).where(models.Job.job_key == ctx["job_key"]))
+    assert job is not None
+
+    captured: dict[str, object] = {}
+
+    class DummyResponse:
+        status_code = 201
+
+    def fake_post(url, *, data=None, files=None, headers=None, timeout=None):
+        for field_name, file_payload in files:
+            if field_name == "body":
+                captured["body"] = json.loads(file_payload[1])
+                break
+        return DummyResponse()
+
+    monkeypatch.setattr(delivery_module.httpx, "post", fake_post)
+
+    job_result = result_builder.build_job_result(db, job)
+    article_payload = job_result.files[0].articles[0]
+    assert article_payload.images
+
+    captionless_article = schemas.ArticleResponse(
+        article_id=article_payload.article_id + 1000,
+        page_number=article_payload.page_number,
+        article_order=article_payload.article_order + 10,
+        title="Captionless image article",
+        body_text="Image without caption",
+        original_title="Captionless image article",
+        original_body_text="Image without caption",
+        title_bbox=article_payload.title_bbox,
+        article_bbox=article_payload.article_bbox,
+        relevance_score=None,
+        source_metadata=schemas.ArticleSourceMetadataResponse(),
+        images=[
+            schemas.ArticleImageResponse(
+                image_id=article_payload.images[0].image_id,
+                image_path=article_payload.images[0].image_path,
+                bbox=article_payload.images[0].bbox,
+                captions=[],
+            )
+        ],
+        bundle_dir=str(ctx["bundle_dir"]),
+        markdown_path=str(ctx["bundle_dir"] / "article.md"),
+        metadata_path=str(ctx["bundle_dir"] / "article.json"),
+    )
+
+    client = delivery_module.NewsDeliveryClient()
+    client.deliver_articles(
+        [captionless_article],
+        state_filename="demo_delivery.json",
+        raise_on_failure=True,
+    )
+
+    assert captured["body"] == [
+        {
+            "title": "Captionless image article",
+            "body_text": "Image without caption",
+            "imgs": [
+                {
+                    "caption": "",
+                    "src": "file_0_0",
+                }
+            ],
+            "relevance_score": 0.0,
+            "publication": "",
+            "issue_date": "",
+        }
+    ]
+
+
 def test_page_preview_scales_normalized_bboxes_for_large_pages(tmp_path: Path, monkeypatch) -> None:
     ctx = _bootstrap_app(tmp_path, monkeypatch)
     models = _fresh_import("app.db.models")

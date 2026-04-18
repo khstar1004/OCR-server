@@ -263,7 +263,7 @@ class NewsDeliveryClient:
         for article_index, record in enumerate(records):
             images = [
                 {
-                    "caption": image.caption,
+                    "caption": str(image.caption or "").strip(),
                     "src": f"file_{article_index}_{image_index}",
                 }
                 for image_index, image in enumerate(record.images)

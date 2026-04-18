@@ -363,3 +363,24 @@ def test_chandra_engine_can_parse_remote_marker_payload(tmp_path: Path, monkeypa
     assert "원격 Marker 본문" in article.body_text
     assert len(article.images) == 1
     assert [caption.text for caption in article.images[0].captions] == ["원격 Marker 캡션"]
+
+
+def test_remote_service_timeout_disables_read_timeout_when_env_is_zero(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("OCR_BACKEND", "chandra")
+    monkeypatch.setenv("OCR_SERVICE_URL", "http://ocr-service:8000")
+    monkeypatch.setenv("OCR_SERVICE_TIMEOUT_SEC", "0")
+    monkeypatch.setenv("CHANDRA_MODEL_ID", "datalab-to/chandra-ocr-2")
+    monkeypatch.setenv("CHANDRA_MODEL_DIR", "")
+    monkeypatch.setenv("INPUT_ROOT", str((tmp_path / "input").resolve()))
+    monkeypatch.setenv("OUTPUT_ROOT", str((tmp_path / "output").resolve()))
+    monkeypatch.setenv("MODELS_ROOT", str((tmp_path / "models").resolve()))
+
+    _reset_app_modules()
+    engine_module = importlib.import_module("app.services.ocr_engine")
+
+    timeout = engine_module.OCREngine()._remote_service_timeout()
+
+    assert timeout.connect == 30.0
+    assert timeout.pool == 30.0
+    assert timeout.read is None
+    assert timeout.write is None
