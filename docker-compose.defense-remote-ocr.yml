@@ -3,7 +3,7 @@ services:
     env_file:
       - ./.env
     image: ${APP_IMAGE:-a-cong-ocr:chandra}
-    gpus: all
+    runtime: nvidia
     ports:
       - "${API_HOST_PORT:-18007}:8000"
     environment:
@@ -58,7 +58,7 @@ services:
     depends_on:
       vllm-ocr:
         condition: service_healthy
-    gpus: all
+    runtime: nvidia
     ports:
       - "${OCR_API_HOST_PORT:-18009}:8000"
     environment:
@@ -104,8 +104,8 @@ services:
     command: ["python3", "-m", "uvicorn", "app.ocr_service:app", "--host", "0.0.0.0", "--port", "8000"]
 
   vllm-ocr:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.17.0}
-    gpus: all
+    image: ${VLLM_IMAGE:-a-cong-vllm-openai:chandra}
+    runtime: nvidia
     ipc: host
     environment:
       HF_HOME: /root/.cache/huggingface

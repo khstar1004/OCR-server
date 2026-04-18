@@ -86,7 +86,8 @@ OCR 전용 컨테이너는 `http://127.0.0.1:18009/api/v1/ocr/*`로 호출합니
 
 - `app`: 메인 서비스
 - `ocr-service`: 현재 OCR API 계약을 유지하는 어댑터
-- `vllm-ocr`: 공식 `vllm/vllm-openai:v0.17.0` 이미지로 Chandra 모델 호스팅
+- `vllm-ocr`: `a-cong-vllm-openai:chandra` 이미지로 Chandra 모델 전체를 호스팅
+- 내부 런타임 검증은 Chandra 설정의 `model_type=qwen3_5`를 확인하지만, 별도 Qwen 전용 OCR을 띄우는 구조는 아닙니다.
 - `MODELS_DIR`는 `/models`로, `MODEL_CACHE_DIR`는 `/root/.cache/huggingface`로 마운트됩니다.
 
 PowerShell 예시:

@@ -1,0 +1,21 @@
+FROM vllm/vllm-openai:v0.17.0
+
+ARG HF_TRANSFORMERS_VERSION=5.5.0
+ARG HF_HUB_VERSION=1.9.0
+ARG TOKENIZERS_VERSION=0.22.2
+ARG ACCELERATE_VERSION=1.13.0
+ARG MISTRAL_COMMON_VERSION=1.11.0
+
+COPY docker/vllm-qwen35/check_vllm_qwen35_runtime.py /opt/a-cong/check_vllm_qwen35_runtime.py
+COPY docker/vllm-qwen35/run_vllm_serve_validated.sh /opt/a-cong/run_vllm_serve_validated.sh
+
+RUN chmod +x /opt/a-cong/run_vllm_serve_validated.sh \
+    && python3 -m pip install --no-cache-dir --upgrade \
+        "transformers==${HF_TRANSFORMERS_VERSION}" \
+        "huggingface_hub==${HF_HUB_VERSION}" \
+        "tokenizers==${TOKENIZERS_VERSION}" \
+        "accelerate==${ACCELERATE_VERSION}" \
+        "mistral-common==${MISTRAL_COMMON_VERSION}" \
+    && python3 /opt/a-cong/check_vllm_qwen35_runtime.py --expect-model-type qwen3_5
+
+ENTRYPOINT ["/opt/a-cong/run_vllm_serve_validated.sh"]

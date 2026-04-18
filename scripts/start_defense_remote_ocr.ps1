@@ -7,6 +7,17 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+$dockerCommand = Get-Command docker -ErrorAction SilentlyContinue
+$dockerPath = if ($dockerCommand) {
+    $dockerCommand.Source
+}
+else {
+    "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe"
+}
+
+if (-not (Test-Path $dockerPath)) {
+    throw "docker executable not found. Expected at: $dockerPath"
+}
 
 function Resolve-RepoPath {
     param([string]$PathValue)
@@ -45,7 +56,8 @@ foreach ($dir in @("news_pdfs", "news_data", "model_cache")) {
 
 Push-Location $repoRoot
 try {
-    docker compose -f $resolvedComposeFile up -d
+    & $dockerPath compose -f $resolvedComposeFile config | Out-Null
+    & $dockerPath compose -f $resolvedComposeFile up -d --wait
 }
 finally {
     Pop-Location

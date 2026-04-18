@@ -29,6 +29,7 @@
 - 작업 상세: `GET /api/v1/jobs/{job_id}/detail`
 - 페이지 미리보기: `GET /api/v1/jobs/{job_id}/pages/{page_id}/preview`
 
+OCR API 가이드는 [docs/ocr_api_guide.md](docs/ocr_api_guide.md) 에 정리했습니다.
 호환 API 지원 범위는 [docs/datalab_compat_api.md](docs/datalab_compat_api.md) 에 정리했습니다.
 외부 연동 기준 통합 명세는 [docs/external_api_spec.md](docs/external_api_spec.md) 에 정리했습니다.
 국방망 운영 가이드는 [docs/defense_network_ocr_guide.md](docs/defense_network_ocr_guide.md) 에 정리했습니다.
@@ -107,7 +108,8 @@ PDF를 [news_pdfs](C:\Users\USER\Desktop\a-cong-OCR-V2\news_pdfs)에 넣은 뒤 
 - 별도 OCR API가 필요할 때만 `docker compose --profile remote-ocr up -d` 로 `ocr-service`와 `vllm-ocr`를 같이 올립니다.
 - 기본 URL: `http://127.0.0.1:18007` (app), `http://127.0.0.1:18009` (`remote-ocr` 프로필의 OCR service)
 - `OCR_SERVICE_MODE`, `OCR_SERVICE_API_KEY`, `OCR_SERVICE_MARKER_MODE` 도 `.env`에서 app 컨테이너로 같이 전달됩니다.
-- `ocr-service`는 현재 OCR API 계약을 유지하는 어댑터이고, 실제 모델 호스팅은 공식 `vllm/vllm-openai:v0.17.0` 이미지 기반의 `vllm-ocr`가 담당합니다.
+- `ocr-service`는 현재 OCR API 계약을 유지하는 어댑터이고, 실제 모델 호스팅은 커스텀 `a-cong-vllm-openai:chandra` 이미지 기반의 `vllm-ocr`가 담당합니다.
+- 내부 런타임 호환성 검증에서 `qwen3_5`를 확인하는 이유는 Chandra 모델 설정의 `model_type`가 그 값이기 때문이며, 배포 모델 자체는 전체 `Chandra OCR`입니다.
 - `vllm-ocr`는 `${MODELS_DIR}`를 `/models`로, `${MODEL_CACHE_DIR}`를 `/root/.cache/huggingface`로 마운트합니다.
 - `vllm-ocr`는 Chandra upstream `chandra_vllm` 스크립트와 맞춘 기본값으로 `VLLM_MAX_MODEL_LEN=18000`, `VLLM_GPU_MEMORY_UTILIZATION=0.85`, `VLLM_MM_PROCESSOR_KWARGS={"min_pixels":3136,"max_pixels":6291456}`를 사용합니다.
 - 기본 `remote-ocr` 구성은 `VLLM_MODEL_PATH=/models/chandra-ocr-2`, `VLLM_MODEL_NAME=chandra-ocr-2`를 사용합니다.

@@ -5,7 +5,7 @@
 - Installed exact version: running Docker runtime container `a-cong-ocr:chandra`
 - Image/runtime basis: `Ubuntu 22.04.4 LTS`, `Python 3.10.12`
 - Pinned build basis: `Dockerfile`, `docker-compose.yml`, `requirements.txt`
-- vLLM basis: running container `vllm/vllm-openai:v0.17.0`
+- vLLM basis: running container `a-cong-vllm-openai:chandra` built from `Dockerfile.vllm`
 - Model metadata basis: `news_models/chandra-ocr-2/.cache/huggingface/download/*.metadata`
 - GUI basis: local Python `C:\Users\USER\AppData\Local\Programs\Python\Python312\python.exe`
 

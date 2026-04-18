@@ -122,14 +122,14 @@
 현재 런타임 기준:
 
 - 앱 이미지: `a-cong-ocr:chandra`
-- 보조 이미지: `vllm/vllm-openai:v0.17.0`
+- 보조 이미지: `a-cong-vllm-openai:chandra`
 - 컨테이너 OS: `Ubuntu 22.04.4 LTS`
 - 컨테이너 Python: `3.10.12`
 - CUDA 런타임 베이스: `nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04`
 
 ### 3. 중요한 점
 
-현재 compose는 `gpus: all` 기준이다.
+현재 compose는 `runtime: nvidia` 기준이다.
 
 - GPU 서버가 아니면 현재 이미지 그대로는 운영이 어렵다.
 - GPU 서버라도 NVIDIA 드라이버와 Container Toolkit이 없으면 컨테이너는 떠도 OCR 추론이 정상 동작하지 않는다.

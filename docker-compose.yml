@@ -12,7 +12,7 @@ services:
         PRELOAD_CHANDRA: ${PRELOAD_CHANDRA:-false}
         CHANDRA_MODEL_ID: ${CHANDRA_MODEL_ID:-datalab-to/chandra-ocr-2}
         CHANDRA_MODEL_DIR: /models/chandra-ocr-2
-    gpus: all
+    runtime: nvidia
     ports:
       - "${API_HOST_PORT:-18007}:8000"
     environment:
@@ -76,7 +76,7 @@ services:
         PRELOAD_CHANDRA: ${PRELOAD_CHANDRA:-false}
         CHANDRA_MODEL_ID: ${CHANDRA_MODEL_ID:-datalab-to/chandra-ocr-2}
         CHANDRA_MODEL_DIR: /models/chandra-ocr-2
-    gpus: all
+    runtime: nvidia
     ports:
       - "${OCR_API_HOST_PORT:-18009}:8000"
     environment:
@@ -123,8 +123,8 @@ services:
 
   vllm-ocr:
     profiles: ["remote-ocr", "vllm"]
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.17.0}
-    gpus: all
+    image: ${VLLM_IMAGE:-a-cong-vllm-openai:chandra}
+    runtime: nvidia
     ipc: host
     environment:
       HF_HOME: /root/.cache/huggingface
