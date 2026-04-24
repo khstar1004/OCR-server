@@ -2,7 +2,6 @@ param(
     [string]$AppTar = ".\\dist\\a-cong-ocr_chandra.tar",
     [string]$VllmTar = ".\\dist\\a-cong-vllm-openai_chandra.tar",
     [string]$VllmImageTag = "a-cong-vllm-openai:chandra",
-    [string]$LegacyVllmImageTag = "a-cong-vllm-openai:qwen35",
     [switch]$SkipRuntimeValidation,
     [switch]$SkipGpuRuntimeValidation
 )
@@ -52,11 +51,7 @@ if (Test-Path $resolvedVllmTar) {
     & $dockerPath load -i $resolvedVllmTar
 }
 else {
-    Write-Warning "vLLM image tar not found: $resolvedVllmTar"
-}
-
-if ($VllmImageTag -ne $LegacyVllmImageTag -and (Test-DockerImageExists -ImageRef $LegacyVllmImageTag)) {
-    & $dockerPath tag $LegacyVllmImageTag $VllmImageTag
+    throw "vLLM image tar not found: $resolvedVllmTar"
 }
 
 if (-not $SkipRuntimeValidation) {

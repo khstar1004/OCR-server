@@ -6,11 +6,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
 
+def normalize_root_path(value: str | None) -> str:
+    raw_value = (value or "").strip()
+    if not raw_value or raw_value == "/":
+        return ""
+    return "/" + raw_value.strip("/")
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     app_name: str = Field(default="news-ocr", alias="APP_NAME")
     app_env: str = Field(default="development", alias="APP_ENV")
+    root_path: str = Field(default="", alias="ROOT_PATH")
     api_prefix: str = Field(default="/api/v1", alias="API_PREFIX")
     database_url: str = Field(default="sqlite:///./news_ocr.db", alias="DATABASE_URL")
     auto_create_tables: bool = Field(default=True, alias="AUTO_CREATE_TABLES")
@@ -52,6 +60,10 @@ class Settings(BaseSettings):
     target_api_base_url: str | None = Field(default=None, alias="TARGET_API_BASE_URL")
     target_api_token: str | None = Field(default=None, alias="TARGET_API_TOKEN")
     target_api_timeout_sec: float = Field(default=30.0, alias="TARGET_API_TIMEOUT_SEC")
+
+    @property
+    def normalized_root_path(self) -> str:
+        return normalize_root_path(self.root_path)
 
     def ensure_directories(self) -> None:
         self.input_root.mkdir(parents=True, exist_ok=True)

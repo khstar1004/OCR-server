@@ -1,0 +1,52 @@
+START HERE - a-cong OCR public k8s deployment
+
+Target environment:
+- RedHat Linux
+- Kubernetes namespace: nocodeaidev
+- IngressClass: nginx
+- StorageClass: local-path
+- imagePullSecret: harbor-reg-cred
+- Host: nocodeaidev.army.mil:20443
+
+Public URLs:
+- App/demo: https://nocodeaidev.army.mil:20443/a-cong-ocr/demo/jobs
+- App health: https://nocodeaidev.army.mil:20443/a-cong-ocr/api/v1/health
+- OCR health: https://nocodeaidev.army.mil:20443/a-cong-ocr-api/health
+- OCR image API: https://nocodeaidev.army.mil:20443/a-cong-ocr-api/api/v1/ocr/image
+
+Read first:
+- docs/defense_k8s_nocodeaidev_runbook.md
+
+Deploy file:
+- k8s/defense-remote-ocr.nocodeaidev.yaml
+
+Before applying:
+1. Confirm image paths in the YAML match Harbor.
+2. Set TARGET_API_BASE_URL in the ConfigMap.
+3. Set TARGET_API_TOKEN in the Secret if the callback target needs it.
+4. Confirm the model will exist at /models/chandra-ocr-2/config.json inside the pods.
+5. Do not expose a-cong-vllm-ocr through Ingress.
+
+Apply:
+chmod +x scripts/*.sh
+./scripts/deploy_public_ocr_closed_network.sh
+
+This command runs preflight checks first:
+- namespace nocodeaidev
+- IngressClass nginx
+- StorageClass local-path
+- imagePullSecret harbor-reg-cred
+- GPU node nocode-ai-army01
+- free nvidia.com/gpu >= 1
+- no Ingress collision on /a-cong-ocr or /a-cong-ocr-api
+
+Check:
+scripts/check_k8s_public_ocr.sh
+
+vLLM transformer/qwen rule:
+- If scripts/validate_vllm_image_offline.sh fails on the internet/prep PC, the same image will fail in the closed network.
+- Do not try pip install inside the closed network.
+- Rebuild and re-export the vLLM image on the internet/prep PC with the exact chandra-ocr-2 model folder used in the field.
+- The vLLM image contains a startup compatibility alias for qwen2_5 -> qwen2 and qwen2_5_text -> qwen2.
+- The included Chandra model is qwen3_5, but it also uses Qwen2VLImageProcessorFast and Qwen2Tokenizer. The preflight script validates all of these before deployment.
+- It was tested with Docker --network none, GPU runtime, the included model folder, vLLM serve, and /health.

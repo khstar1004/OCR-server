@@ -197,7 +197,7 @@
       <div class="preview-nav">
         <div class="preview-nav-actions">
           {% if article_detail.preview_previous_page_id %}
-          {% set preview_previous_url = "/demo/jobs?job_id=" ~ article_detail.job_key ~ "&article_id=" ~ (article_detail.preview_previous_page_article_id or article_detail.article_id) ~ "&view=" ~ selected_view ~ (("&page_id=" ~ article_detail.preview_previous_page_id) if not article_detail.preview_previous_page_article_id else "") %}
+          {% set preview_previous_url = url_path("/demo/jobs?job_id=" ~ article_detail.job_key ~ "&article_id=" ~ (article_detail.preview_previous_page_article_id or article_detail.article_id) ~ "&view=" ~ selected_view ~ (("&page_id=" ~ article_detail.preview_previous_page_id) if not article_detail.preview_previous_page_article_id else "")) %}
           <a
             class="toolbar-button"
             href="{{ preview_previous_url }}"
@@ -215,7 +215,7 @@
           </span>
 
           {% if article_detail.preview_next_page_id %}
-          {% set preview_next_url = "/demo/jobs?job_id=" ~ article_detail.job_key ~ "&article_id=" ~ (article_detail.preview_next_page_article_id or article_detail.article_id) ~ "&view=" ~ selected_view ~ (("&page_id=" ~ article_detail.preview_next_page_id) if not article_detail.preview_next_page_article_id else "") %}
+          {% set preview_next_url = url_path("/demo/jobs?job_id=" ~ article_detail.job_key ~ "&article_id=" ~ (article_detail.preview_next_page_article_id or article_detail.article_id) ~ "&view=" ~ selected_view ~ (("&page_id=" ~ article_detail.preview_next_page_id) if not article_detail.preview_next_page_article_id else "")) %}
           <a
             class="toolbar-button"
             href="{{ preview_next_url }}"
@@ -231,7 +231,7 @@
 
         <div class="preview-page-strip" aria-label="pdf pages">
           {% for preview_page in article_detail.preview_pages %}
-          {% set preview_page_url = "/demo/jobs?job_id=" ~ article_detail.job_key ~ "&article_id=" ~ (preview_page.article_id or article_detail.article_id) ~ "&view=" ~ selected_view ~ (("&page_id=" ~ preview_page.page_id) if not preview_page.article_id else "") %}
+          {% set preview_page_url = url_path("/demo/jobs?job_id=" ~ article_detail.job_key ~ "&article_id=" ~ (preview_page.article_id or article_detail.article_id) ~ "&view=" ~ selected_view ~ (("&page_id=" ~ preview_page.page_id) if not preview_page.article_id else "")) %}
           <a
             class="preview-page-chip {% if preview_page.is_current %}is-current{% endif %} {% if preview_page.has_selected_article %}has-selected-article{% endif %}"
             href="{{ preview_page_url }}"
@@ -249,7 +249,7 @@
       {% endif %}
 
       <div class="preview-frame" style="--page-width: {{ article_detail.preview_page_width }}; --page-height: {{ article_detail.preview_page_height }};">
-        <img src="{{ article_detail.preview_page_image_url }}" alt="page {{ article_detail.preview_page_number }}">
+        <img src="{{ url_path(article_detail.preview_page_image_url) }}" alt="page {{ article_detail.preview_page_number }}">
         <div class="overlay-layer">
           {% for box in article_detail.preview_overlay_boxes %}
           <span
@@ -303,7 +303,7 @@
           <div class="article-chip-row">
             {% for page in pdf.pages %}
               {% for article in page.articles %}
-              {% set article_url = "/demo/jobs?job_id=" ~ article_detail.job_key ~ "&article_id=" ~ article.article_id ~ "&view=" ~ selected_view %}
+              {% set article_url = url_path("/demo/jobs?job_id=" ~ article_detail.job_key ~ "&article_id=" ~ article.article_id ~ "&view=" ~ selected_view) %}
               <a
                 class="article-chip {% if article_detail.article_id == article.article_id %}is-selected{% endif %}"
                 href="{{ article_url }}"

@@ -72,6 +72,7 @@ def main() -> None:
 
     require_contains(compose_path, args.expected_vllm_image)
     require_contains(compose_path, "runtime: nvidia")
+    require_contains(compose_path, "--trust-remote-code")
     require_contains(env_path, f"VLLM_IMAGE={args.expected_vllm_image}")
 
     compose_text = compose_path.read_text(encoding="utf-8")

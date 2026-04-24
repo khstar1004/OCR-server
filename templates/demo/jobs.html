@@ -15,7 +15,7 @@
       <span>작업</span>
       <select onchange="if (this.value) window.location.href = this.value;">
         {% for job in jobs %}
-        <option value="/demo/jobs?job_id={{ job.job_key }}&view={{ selected_view }}" {% if job.job_key == selected_job_key %}selected{% endif %}>
+        <option value="{{ url_path('/demo/jobs?job_id=' ~ job.job_key ~ '&view=' ~ selected_view) }}" {% if job.job_key == selected_job_key %}selected{% endif %}>
           작업 {{ loop.index }}
         </option>
         {% endfor %}
@@ -23,7 +23,7 @@
     </label>
     {% endif %}
     {% if selected_job_key %}
-    <form class="job-delete-form" method="post" action="/demo/jobs/{{ selected_job_key }}/delete?view={{ selected_view }}" onsubmit="return confirm('이 작업을 삭제할까요?');">
+    <form class="job-delete-form" method="post" action="{{ url_path('/demo/jobs/' ~ selected_job_key ~ '/delete?view=' ~ selected_view) }}" onsubmit="return confirm('이 작업을 삭제할까요?');">
       <button class="toolbar-button toolbar-button--danger" type="submit">Delete Job</button>
     </form>
     {% endif %}
@@ -41,7 +41,7 @@
   </div>
 
   <div class="launcher-grid">
-    <form class="launcher-card" method="post" action="/demo/jobs/start-dir" enctype="multipart/form-data">
+    <form class="launcher-card" method="post" action="{{ url_path('/demo/jobs/start-dir') }}" enctype="multipart/form-data">
       <input type="hidden" name="view" value="{{ selected_view }}">
       <label class="launcher-field">
         <span>Folder Upload</span>
@@ -59,7 +59,7 @@
       <button class="toolbar-button toolbar-button--primary" type="submit">폴더 처리 시작</button>
     </form>
 
-    <form class="launcher-card" method="post" action="/demo/jobs/start-file" enctype="multipart/form-data">
+    <form class="launcher-card" method="post" action="{{ url_path('/demo/jobs/start-file') }}" enctype="multipart/form-data">
       <input type="hidden" name="view" value="{{ selected_view }}">
       <label class="launcher-field">
         <span>PDF Upload</span>

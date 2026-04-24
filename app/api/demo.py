@@ -6,8 +6,10 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
+from jinja2 import pass_context
 from sqlalchemy.orm import Session
 
+from app.core.config import normalize_root_path
 from app.db.session import get_db
 from app.web.demo_service import DemoMessage, DemoService, DemoServiceError
 
@@ -20,6 +22,29 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TEMPLATE_ROOT = _REPO_ROOT / "templates"
 _STATIC_ROOT = _REPO_ROOT / "static"
 templates = Jinja2Templates(directory=str(_TEMPLATE_ROOT))
+
+
+def _request_root_path(request: Request | None) -> str:
+    if request is None:
+        return ""
+    return normalize_root_path(str(request.scope.get("root_path") or ""))
+
+
+def _with_root_path(request: Request | None, path: str) -> str:
+    if not path.startswith("/") or path.startswith("//"):
+        return path
+    root_path = _request_root_path(request)
+    if not root_path or path == root_path or path.startswith(f"{root_path}/"):
+        return path
+    return f"{root_path}{path}"
+
+
+@pass_context
+def _template_url_path(context: dict[str, object], path: object) -> str:
+    return _with_root_path(context.get("request"), str(path))
+
+
+templates.env.globals["url_path"] = _template_url_path
 
 
 def _is_hx_request(request: Request) -> bool:
@@ -45,6 +70,10 @@ def _build_url(path: str, **query: str | int | None) -> str:
     return f"{path}?{encoded}" if encoded else path
 
 
+def _build_request_url(request: Request, path: str, **query: str | int | None) -> str:
+    return _with_root_path(request, _build_url(path, **query))
+
+
 def _preview_page_query_value(detail: object | None) -> int | None:
     if detail is None:
         return None
@@ -55,26 +84,39 @@ def _preview_page_query_value(detail: object | None) -> int | None:
     return int(preview_page_id)
 
 
-def _build_view_urls(path: str, *, page_id: int | None = None, **query: str | int | None) -> dict[str, str]:
+def _build_view_urls(
+    request: Request,
+    path: str,
+    *,
+    page_id: int | None = None,
+    **query: str | int | None,
+) -> dict[str, str]:
     params = {key: value for key, value in query.items() if value not in (None, "")}
     if page_id is not None:
         params["page_id"] = page_id
     return {
-        "blocks": _build_url(path, **params, view="blocks"),
-        "json": _build_url(path, **params, view="json"),
-        "html": _build_url(path, **params, view="html"),
-        "markdown": _build_url(path, **params, view="markdown"),
-        "render": _build_url(path, **params, view="render"),
+        "blocks": _build_request_url(request, path, **params, view="blocks"),
+        "json": _build_request_url(request, path, **params, view="json"),
+        "html": _build_request_url(request, path, **params, view="html"),
+        "markdown": _build_request_url(request, path, **params, view="markdown"),
+        "render": _build_request_url(request, path, **params, view="render"),
     }
 
 
 @router.get("/demo")
-def get_demo_root() -> RedirectResponse:
-    return RedirectResponse(url="/demo/jobs", status_code=302)
+def get_demo_root(request: Request) -> RedirectResponse:
+    return RedirectResponse(url=_with_root_path(request, "/demo/jobs"), status_code=302)
 
 
-def _redirect_jobs_response(*, flash: DemoMessage, view: str, job_id: str | None = None) -> RedirectResponse:
-    redirect_url = _build_url(
+def _redirect_jobs_response(
+    request: Request,
+    *,
+    flash: DemoMessage,
+    view: str,
+    job_id: str | None = None,
+) -> RedirectResponse:
+    redirect_url = _build_request_url(
+        request,
         "/demo/jobs",
         job_id=job_id,
         flash=flash.text,
@@ -124,16 +166,18 @@ def get_demo_jobs(
         "jobs_content_target": "#jobs-content",
         "article_view_urls": (
             _build_view_urls(
+                request,
                 "/demo/jobs",
                 job_id=article_detail.job_key,
                 article_id=article_detail.article_id,
                 page_id=preview_page_id,
             )
             if article_detail is not None
-            else _build_view_urls("/demo/jobs", job_id=job_id, article_id=article_id, page_id=page_id)
+            else _build_view_urls(request, "/demo/jobs", job_id=job_id, article_id=article_id, page_id=page_id)
         ),
         "article_back_url": (
-            _build_url(
+            _build_request_url(
+                request,
                 "/demo/jobs",
                 job_id=article_detail.job_key,
                 article_id=article_detail.article_id,
@@ -141,7 +185,7 @@ def get_demo_jobs(
                 page_id=preview_page_id,
             )
             if article_detail is not None
-            else _build_url("/demo/jobs", job_id=job_id, article_id=article_id, view=selected_view, page_id=page_id)
+            else _build_request_url(request, "/demo/jobs", job_id=job_id, article_id=article_id, view=selected_view, page_id=page_id)
         ),
         **page,
     }
@@ -171,10 +215,12 @@ def get_demo_article(
         "selected_view": selected_view,
         "jobs_content_target": None,
         "article_view_urls": _build_view_urls(
+            request,
             f"/demo/articles/{detail.article_id}",
             page_id=preview_page_id,
         ),
-        "article_back_url": _build_url(
+        "article_back_url": _build_request_url(
+            request,
             "/demo/jobs",
             job_id=detail.job_key,
             article_id=detail.article_id,
@@ -211,6 +257,7 @@ async def redeliver_article(request: Request, article_id: int, db: Session = Dep
 
 @router.post("/demo/jobs/{job_id}/delete")
 def delete_demo_job(
+    request: Request,
     job_id: str,
     view: str | None = Query(default="render"),
     db: Session = Depends(get_db),
@@ -220,11 +267,12 @@ def delete_demo_job(
     except DemoServiceError as exc:
         flash = DemoMessage(level="error", text=exc.message)
     query = urlencode({"flash": flash.text, "level": flash.level, "view": _normalize_view(view)})
-    return RedirectResponse(url=f"/demo/jobs?{query}", status_code=303)
+    return RedirectResponse(url=_with_root_path(request, f"/demo/jobs?{query}"), status_code=303)
 
 
 @router.post("/demo/jobs/start-dir")
 async def start_demo_job_from_dir(
+    request: Request,
     source_dir: str = Form(default=""),
     view: str = Form(default="render"),
     pdf_files: list[UploadFile] | None = File(default=None),
@@ -247,13 +295,14 @@ async def start_demo_job_from_dir(
                 source_dir=source_dir,
             )
         flash = DemoMessage(level="success", text=f"작업을 큐에 넣었습니다: {job.job_key}")
-        return _redirect_jobs_response(flash=flash, view=view, job_id=job.job_key)
+        return _redirect_jobs_response(request, flash=flash, view=view, job_id=job.job_key)
     except DemoServiceError as exc:
-        return _redirect_jobs_response(flash=DemoMessage(level="error", text=exc.message), view=view)
+        return _redirect_jobs_response(request, flash=DemoMessage(level="error", text=exc.message), view=view)
 
 
 @router.post("/demo/jobs/start-file")
 async def start_demo_job_from_file(
+    request: Request,
     pdf_path: str = Form(default=""),
     view: str = Form(default="render"),
     pdf_file: UploadFile | None = File(default=None),
@@ -272,9 +321,9 @@ async def start_demo_job_from_file(
                 pdf_path=pdf_path,
             )
         flash = DemoMessage(level="success", text=f"단일 PDF 작업을 큐에 넣었습니다: {job.job_key}")
-        return _redirect_jobs_response(flash=flash, view=view, job_id=job.job_key)
+        return _redirect_jobs_response(request, flash=flash, view=view, job_id=job.job_key)
     except DemoServiceError as exc:
-        return _redirect_jobs_response(flash=DemoMessage(level="error", text=exc.message), view=view)
+        return _redirect_jobs_response(request, flash=DemoMessage(level="error", text=exc.message), view=view)
 
 
 def _render_action_response(
@@ -289,7 +338,8 @@ def _render_action_response(
     page_id = request.query_params.get("page_id")
     context_name = request.query_params.get("context")
     if not _is_hx_request(request):
-        redirect_url = _build_url(
+        redirect_url = _build_request_url(
+            request,
             f"/demo/articles/{article_id}",
             flash=flash.text,
             level=flash.level,
@@ -308,6 +358,7 @@ def _render_action_response(
     preview_page_id = _preview_page_query_value(detail)
     article_view_urls = (
         _build_view_urls(
+            request,
             "/demo/jobs",
             job_id=detail.job_key,
             article_id=detail.article_id,
@@ -315,6 +366,7 @@ def _render_action_response(
         )
         if context_name == "jobs"
         else _build_view_urls(
+            request,
             f"/demo/articles/{detail.article_id}",
             page_id=preview_page_id,
         )
@@ -327,7 +379,8 @@ def _render_action_response(
         "selected_view": selected_view,
         "jobs_content_target": "#jobs-content" if context_name == "jobs" else None,
         "article_view_urls": article_view_urls,
-        "article_back_url": _build_url(
+        "article_back_url": _build_request_url(
+            request,
             "/demo/jobs",
             job_id=detail.job_key,
             article_id=detail.article_id,

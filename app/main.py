@@ -41,13 +41,14 @@ def create_app(
             resolved_container.watcher.request_stop()
             await watcher_task
 
+    runtime_settings = get_runtime_settings()
     app = FastAPI(
         title="a-cong OCR Core Service",
         version="0.1.0",
+        root_path=runtime_settings.normalized_root_path,
         lifespan=lifespan,
     )
     app.state.container = resolved_container
-    runtime_settings = get_runtime_settings()
     app.include_router(system_router)
     app.include_router(jobs_router)
     app.include_router(health_router, prefix=runtime_settings.api_prefix)

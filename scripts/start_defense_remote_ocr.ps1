@@ -29,6 +29,30 @@ function Resolve-RepoPath {
     return [System.IO.Path]::GetFullPath((Join-Path $repoRoot $PathValue))
 }
 
+function Get-EnvValue {
+    param(
+        [string]$EnvFile,
+        [string]$Key,
+        [string]$DefaultValue
+    )
+
+    if (-not (Test-Path $EnvFile)) {
+        return $DefaultValue
+    }
+
+    foreach ($line in Get-Content $EnvFile) {
+        $trimmed = $line.Trim()
+        if (-not $trimmed -or $trimmed.StartsWith("#")) {
+            continue
+        }
+        if ($trimmed.StartsWith("$Key=")) {
+            return $trimmed.Substring($Key.Length + 1).Trim()
+        }
+    }
+
+    return $DefaultValue
+}
+
 $resolvedComposeFile = Resolve-RepoPath -PathValue $ComposeFile
 $resolvedEnvTemplate = Resolve-RepoPath -PathValue $EnvTemplate
 $resolvedEnvFile = Join-Path $repoRoot ".env"
@@ -48,6 +72,21 @@ if (-not (Test-Path $resolvedEnvFile) -or $ForceEnvCopy) {
 if (-not (Test-Path $resolvedModelDir)) {
     throw "Model directory not found: $resolvedModelDir"
 }
+
+$vllmImageRef = Get-EnvValue -EnvFile $resolvedEnvFile -Key "VLLM_IMAGE" -DefaultValue "a-cong-vllm-openai:chandra"
+
+& $dockerPath image inspect $vllmImageRef *> $null
+if ($LASTEXITCODE -ne 0) {
+    throw "vLLM image tag not found locally: $vllmImageRef"
+}
+
+& $dockerPath run --rm `
+    --entrypoint python3 `
+    -v "${resolvedModelDir}:/models/chandra-ocr-2:ro" `
+    $vllmImageRef `
+    /opt/a-cong/check_vllm_qwen35_runtime.py `
+    --expect-model-type qwen3_5 `
+    --model-dir /models/chandra-ocr-2
 
 foreach ($dir in @("news_pdfs", "news_data", "model_cache")) {
     $target = Join-Path $repoRoot $dir

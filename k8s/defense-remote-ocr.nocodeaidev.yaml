@@ -1,0 +1,502 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: a-cong-ocr-secret
+  namespace: nocodeaidev
+type: Opaque
+stringData:
+  TARGET_API_TOKEN: ""
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: a-cong-ocr-config
+  namespace: nocodeaidev
+data:
+  APP_ENV: "k8s"
+  APP_NAME: "a-cong-ocr"
+  ROOT_PATH: "/a-cong-ocr"
+  API_PREFIX: "/api/v1"
+  AUTO_CREATE_TABLES: "true"
+  WATCH_DIR: "/data/runtime/watch"
+  DATA_DIR: "/data/runtime"
+  DATABASE_URL: "sqlite:////data/runtime/db/news_ocr.db"
+  INPUT_ROOT: "/data/runtime/watch"
+  OUTPUT_ROOT: "/data/runtime/output"
+  MODELS_ROOT: "/models"
+  OCR_BACKEND: "chandra"
+  OCR_SERVICE_URL: "http://a-cong-ocr-service:8000"
+  OCR_SERVICE_MODE: "native"
+  OCR_SERVICE_TIMEOUT_SEC: "0"
+  OCR_SERVICE_POLL_INTERVAL_SEC: "2.0"
+  OCR_SERVICE_MARKER_MODE: "accurate"
+  OCR_OFFLINE: "true"
+  OCR_DEVICE: "gpu"
+  OCR_RETRY_LOW_QUALITY: "true"
+  OCR_QUALITY_MIN_CHARS: "80"
+  OCR_QUALITY_MIN_KOREAN_RATIO: "0.35"
+  PDF_RENDER_DPI: "300"
+  CHANDRA_METHOD: "hf"
+  CHANDRA_MODEL_ID: "datalab-to/chandra-ocr-2"
+  CHANDRA_MODEL_DIR: "/models/chandra-ocr-2"
+  CHANDRA_PROMPT_TYPE: "ocr_layout"
+  CHANDRA_BATCH_SIZE: "1"
+  CHANDRA_DEVICE_MAP: "auto"
+  CHANDRA_DTYPE: "bfloat16"
+  OCR_SERVICE_CHANDRA_METHOD: "vllm"
+  VLLM_API_BASE: "http://a-cong-vllm-ocr:8000/v1"
+  VLLM_MODEL_NAME: "chandra-ocr-2"
+  VLLM_MODEL_PATH: "/models/chandra-ocr-2"
+  VLLM_EXPECT_MODEL_TYPE: ""
+  VLLM_MAX_MODEL_LEN: "18000"
+  VLLM_GPU_MEMORY_UTILIZATION: "0.85"
+  VLLM_MM_PROCESSOR_KWARGS: "{\"min_pixels\":3136,\"max_pixels\":6291456}"
+  MAX_VLLM_RETRIES: "6"
+  HF_HUB_OFFLINE: "1"
+  TRANSFORMERS_OFFLINE: "1"
+  HF_HUB_DISABLE_TELEMETRY: "1"
+  LLM_BASE_URL: ""
+  LLM_MODEL: "gpt-oss-20b"
+  LLM_TIMEOUT_SEC: "20"
+  CALLBACK_TIMEOUT_SECONDS: "30"
+  TARGET_API_BASE_URL: ""
+  TARGET_API_TIMEOUT_SEC: "30"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: a-cong-ocr-models-pvc
+  namespace: nocodeaidev
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 120Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: a-cong-ocr-model-cache-pvc
+  namespace: nocodeaidev
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 80Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: a-cong-ocr-runtime-pvc
+  namespace: nocodeaidev
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 100Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: a-cong-ocr-app
+  namespace: nocodeaidev
+  labels:
+    app.kubernetes.io/name: a-cong-ocr
+    app.kubernetes.io/component: app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: a-cong-ocr
+      app.kubernetes.io/component: app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: a-cong-ocr
+        app.kubernetes.io/component: app
+    spec:
+      imagePullSecrets:
+        - name: harbor-reg-cred
+      initContainers:
+        - name: init-runtime-dirs
+          image: nocodeaidev.army.mil:20443/nocodeaidev/a-cong-ocr:chandra
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - mkdir -p /data/runtime/db /data/runtime/output /data/runtime/watch
+          volumeMounts:
+            - name: runtime-data
+              mountPath: /data/runtime
+      containers:
+        - name: app
+          image: nocodeaidev.army.mil:20443/nocodeaidev/a-cong-ocr:chandra
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: a-cong-ocr-config
+            - secretRef:
+                name: a-cong-ocr-secret
+          env:
+            - name: HF_HOME
+              value: /opt/model-cache/huggingface
+          volumeMounts:
+            - name: runtime-data
+              mountPath: /data/runtime
+            - name: models
+              mountPath: /models
+              readOnly: true
+            - name: model-cache
+              mountPath: /opt/model-cache
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "8"
+              memory: 16Gi
+      volumes:
+        - name: runtime-data
+          persistentVolumeClaim:
+            claimName: a-cong-ocr-runtime-pvc
+        - name: models
+          persistentVolumeClaim:
+            claimName: a-cong-ocr-models-pvc
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: a-cong-ocr-model-cache-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: a-cong-ocr-app
+  namespace: nocodeaidev
+  labels:
+    app.kubernetes.io/name: a-cong-ocr
+    app.kubernetes.io/component: app
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: a-cong-ocr
+    app.kubernetes.io/component: app
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: a-cong-ocr-service
+  namespace: nocodeaidev
+  labels:
+    app.kubernetes.io/name: a-cong-ocr
+    app.kubernetes.io/component: ocr-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: a-cong-ocr
+      app.kubernetes.io/component: ocr-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: a-cong-ocr
+        app.kubernetes.io/component: ocr-service
+    spec:
+      imagePullSecrets:
+        - name: harbor-reg-cred
+      containers:
+        - name: ocr-service
+          image: nocodeaidev.army.mil:20443/nocodeaidev/a-cong-ocr:chandra
+          imagePullPolicy: IfNotPresent
+          command:
+            - python3
+            - -m
+            - uvicorn
+            - app.ocr_service:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: a-cong-ocr-config
+            - secretRef:
+                name: a-cong-ocr-secret
+          env:
+            - name: ROOT_PATH
+              value: /a-cong-ocr-api
+            - name: CHANDRA_METHOD
+              value: vllm
+            - name: OCR_SERVICE_URL
+              value: ""
+            - name: INPUT_ROOT
+              value: /data/runtime/input
+            - name: HF_HOME
+              value: /opt/model-cache/huggingface
+          volumeMounts:
+            - name: runtime-data
+              mountPath: /data/runtime
+            - name: models
+              mountPath: /models
+              readOnly: true
+            - name: model-cache
+              mountPath: /opt/model-cache
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "2"
+              memory: 8Gi
+            limits:
+              cpu: "8"
+              memory: 32Gi
+      volumes:
+        - name: runtime-data
+          persistentVolumeClaim:
+            claimName: a-cong-ocr-runtime-pvc
+        - name: models
+          persistentVolumeClaim:
+            claimName: a-cong-ocr-models-pvc
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: a-cong-ocr-model-cache-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: a-cong-ocr-service
+  namespace: nocodeaidev
+  labels:
+    app.kubernetes.io/name: a-cong-ocr
+    app.kubernetes.io/component: ocr-service
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: a-cong-ocr
+    app.kubernetes.io/component: ocr-service
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: a-cong-vllm-ocr
+  namespace: nocodeaidev
+  labels:
+    app.kubernetes.io/name: a-cong-ocr
+    app.kubernetes.io/component: vllm-ocr
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: a-cong-ocr
+      app.kubernetes.io/component: vllm-ocr
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: a-cong-ocr
+        app.kubernetes.io/component: vllm-ocr
+    spec:
+      imagePullSecrets:
+        - name: harbor-reg-cred
+      containers:
+        - name: vllm-ocr
+          image: nocodeaidev.army.mil:20443/nocodeaidev/a-cong-vllm-openai:chandra
+          imagePullPolicy: IfNotPresent
+          args:
+            - "$(VLLM_MODEL_PATH)"
+            - --trust-remote-code
+            - --served-model-name
+            - "$(VLLM_MODEL_NAME)"
+            - --dtype
+            - bfloat16
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
+            - --max-model-len
+            - "$(VLLM_MAX_MODEL_LEN)"
+            - --gpu-memory-utilization
+            - "$(VLLM_GPU_MEMORY_UTILIZATION)"
+            - --enable-prefix-caching
+            - --mm-processor-kwargs
+            - "$(VLLM_MM_PROCESSOR_KWARGS)"
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: a-cong-ocr-config
+          env:
+            - name: HF_HOME
+              value: /root/.cache/huggingface
+          volumeMounts:
+            - name: models
+              mountPath: /models
+              readOnly: true
+            - name: model-cache
+              mountPath: /root/.cache/huggingface
+            - name: dshm
+              mountPath: /dev/shm
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 80
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 8
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 8
+          resources:
+            requests:
+              cpu: "8"
+              memory: 64Gi
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "24"
+              memory: 160Gi
+              nvidia.com/gpu: "1"
+              # HAMi gpumem is enabled only if `kubectl describe node` shows
+              # nvidia.com/gpumem or nvidia.com/gpumem-percentage in Allocatable.
+              # nvidia.com/gpumem: "50000"
+              # nvidia.com/gpucores: "50"
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: a-cong-ocr-models-pvc
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: a-cong-ocr-model-cache-pvc
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: a-cong-vllm-ocr
+  namespace: nocodeaidev
+  labels:
+    app.kubernetes.io/name: a-cong-ocr
+    app.kubernetes.io/component: vllm-ocr
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: a-cong-ocr
+    app.kubernetes.io/component: vllm-ocr
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: a-cong-ocr-app
+  namespace: nocodeaidev
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "1024m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/x-forwarded-prefix: /a-cong-ocr
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: nocodeaidev.army.mil
+      http:
+        paths:
+          - path: /a-cong-ocr(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: a-cong-ocr-app
+                port:
+                  number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: a-cong-ocr-api
+  namespace: nocodeaidev
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "1024m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/x-forwarded-prefix: /a-cong-ocr-api
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: nocodeaidev.army.mil
+      http:
+        paths:
+          - path: /a-cong-ocr-api(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: a-cong-ocr-service
+                port:
+                  number: 8000

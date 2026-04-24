@@ -1,8 +1,8 @@
 {% set is_selected_article = detail_item.article_id == article_detail.article_id %}
 {% if jobs_content_target %}
-{% set detail_url = "/demo/jobs?job_id=" ~ detail_item.job_key ~ "&article_id=" ~ detail_item.article_id ~ "&view=" ~ selected_view %}
+{% set detail_url = url_path("/demo/jobs?job_id=" ~ detail_item.job_key ~ "&article_id=" ~ detail_item.article_id ~ "&view=" ~ selected_view) %}
 {% else %}
-{% set detail_url = "/demo/articles/" ~ detail_item.article_id ~ "?view=" ~ selected_view %}
+{% set detail_url = url_path("/demo/articles/" ~ detail_item.article_id ~ "?view=" ~ selected_view) %}
 {% endif %}
 
 <article class="result-card page-article-card {% if is_selected_article %}is-selected{% endif %}">
@@ -76,7 +76,7 @@
     {% for image in detail_item.images %}
     <figure class="image-card image-card-large page-article-image-card">
       <img
-        src="{{ image.image_url }}"
+        src="{{ url_path(image.image_url) }}"
         alt="article image {{ image.image_id }}"
         width="{{ image.width }}"
         height="{{ image.height }}"

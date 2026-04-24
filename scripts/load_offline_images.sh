@@ -4,7 +4,6 @@ set -euo pipefail
 APP_TAR="${APP_TAR:-./dist/a-cong-ocr_chandra.tar}"
 VLLM_TAR="${VLLM_TAR:-./dist/a-cong-vllm-openai_chandra.tar}"
 VLLM_IMAGE_TAG="${VLLM_IMAGE_TAG:-a-cong-vllm-openai:chandra}"
-LEGACY_VLLM_IMAGE_TAG="${LEGACY_VLLM_IMAGE_TAG:-a-cong-vllm-openai:qwen35}"
 SKIP_RUNTIME_VALIDATION="${SKIP_RUNTIME_VALIDATION:-0}"
 SKIP_GPU_RUNTIME_VALIDATION="${SKIP_GPU_RUNTIME_VALIDATION:-0}"
 
@@ -39,11 +38,8 @@ fi
 if [[ -f "${VLLM_TAR_PATH}" ]]; then
   "${DOCKER_BIN}" load -i "${VLLM_TAR_PATH}"
 else
-  echo "Warning: vLLM image tar not found: ${VLLM_TAR_PATH}" >&2
-fi
-
-if [[ "${VLLM_IMAGE_TAG}" != "${LEGACY_VLLM_IMAGE_TAG}" ]] && docker_image_exists "${LEGACY_VLLM_IMAGE_TAG}"; then
-  "${DOCKER_BIN}" tag "${LEGACY_VLLM_IMAGE_TAG}" "${VLLM_IMAGE_TAG}"
+  echo "vLLM image tar not found: ${VLLM_TAR_PATH}" >&2
+  exit 1
 fi
 
 if [[ "${SKIP_RUNTIME_VALIDATION}" != "1" ]]; then

@@ -72,8 +72,8 @@
       >Download</button>
       <form
         method="post"
-        action="/api/articles/{{ article_detail.article_id }}/reprocess?view={{ selected_view }}{% if article_detail.preview_page_id != article_detail.page_id %}&page_id={{ article_detail.preview_page_id }}{% endif %}{% if jobs_content_target %}&context=jobs{% endif %}"
-        hx-post="/api/articles/{{ article_detail.article_id }}/reprocess?view={{ selected_view }}{% if article_detail.preview_page_id != article_detail.page_id %}&page_id={{ article_detail.preview_page_id }}{% endif %}{% if jobs_content_target %}&context=jobs{% endif %}"
+        action="{{ url_path('/api/articles/' ~ article_detail.article_id ~ '/reprocess?view=' ~ selected_view ~ (('&page_id=' ~ article_detail.preview_page_id) if article_detail.preview_page_id != article_detail.page_id else '') ~ (('&context=jobs') if jobs_content_target else '')) }}"
+        hx-post="{{ url_path('/api/articles/' ~ article_detail.article_id ~ '/reprocess?view=' ~ selected_view ~ (('&page_id=' ~ article_detail.preview_page_id) if article_detail.preview_page_id != article_detail.page_id else '') ~ (('&context=jobs') if jobs_content_target else '')) }}"
         hx-target="#article-panel"
         hx-swap="innerHTML"
       >

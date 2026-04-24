@@ -19,15 +19,23 @@ def test_defense_bundle_defaults_use_custom_vllm_image() -> None:
     assert "a-cong-vllm-openai:chandra" in compose_text
     assert "vllm/vllm-openai:v0.17.0" not in compose_text
     assert "runtime: nvidia" in compose_text
+    assert "--trust-remote-code" in compose_text
     assert "gpus:" not in compose_text
     assert "VLLM_IMAGE=a-cong-vllm-openai:chandra" in env_text
     assert "a-cong-vllm-openai_chandra.tar" in loader_text
     assert "check_vllm_qwen35_runtime.py" in loader_text
+    assert "vLLM image tar not found" in loader_text
+    assert "Write-Warning" not in loader_text
+    assert "a-cong-vllm-openai:qwen35" not in loader_text
     assert "--runtime=nvidia" in loader_text
     assert "a-cong-vllm-openai_chandra.tar" in loader_sh_text
     assert "check_vllm_qwen35_runtime.py" in loader_sh_text
+    assert "vLLM image tar not found" in loader_sh_text
+    assert "Warning: vLLM image tar not found" not in loader_sh_text
+    assert "a-cong-vllm-openai:qwen35" not in loader_sh_text
     assert "--runtime=nvidia" in loader_sh_text
     assert "compose -f" in start_sh_text
+    assert "check_vllm_qwen35_runtime.py" in start_sh_text
     assert "Dockerfile.vllm" in builder_text
 
 
@@ -38,7 +46,7 @@ def test_bundle_validator_accepts_custom_vllm_bundle(tmp_path: Path) -> None:
     (bundle_dir / "scripts").mkdir(parents=True)
 
     (bundle_dir / "docker-compose.defense-remote-ocr.yml").write_text(
-        "services:\n  vllm-ocr:\n    image: a-cong-vllm-openai:chandra\n    runtime: nvidia\n",
+        "services:\n  vllm-ocr:\n    image: a-cong-vllm-openai:chandra\n    runtime: nvidia\n    command:\n      - /models/chandra-ocr-2\n      - --trust-remote-code\n",
         encoding="utf-8",
     )
     (bundle_dir / ".env").write_text("VLLM_IMAGE=a-cong-vllm-openai:chandra\n", encoding="utf-8")

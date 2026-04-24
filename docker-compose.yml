@@ -146,6 +146,7 @@ services:
       start_period: 60s
     command:
       - ${VLLM_MODEL_PATH:-/models/chandra-ocr-2}
+      - --trust-remote-code
       - --served-model-name
       - ${VLLM_MODEL_NAME:-chandra-ocr-2}
       - --dtype

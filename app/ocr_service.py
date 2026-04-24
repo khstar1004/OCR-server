@@ -887,9 +887,10 @@ def list_custom_pipelines(request: Request) -> dict[str, Any]:
 
 
 def create_app() -> FastAPI:
+    settings = get_settings()
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        settings = get_settings()
         settings.ensure_directories()
         app.state.ocr_engine = OCREngine()
         app.state.datalab_compat = DatalabCompatService(settings, app.state.ocr_engine)
@@ -900,6 +901,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="a-cong OCR Service",
         version="0.1.0",
+        root_path=settings.normalized_root_path,
         lifespan=lifespan,
     )
     app.include_router(router)
