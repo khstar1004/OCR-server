@@ -3,8 +3,7 @@ set -euo pipefail
 
 IMAGE_TAG="${1:-nocodeaidev.army.mil:20443/nocodeaidev/a-cong-vllm-openai:chandra}"
 MODEL_DIR="${2:-./news_models/chandra-ocr-2}"
-DOCKER_GPU_ARGS="${DOCKER_GPU_ARGS:---runtime=nvidia}"
-read -r -a GPU_ARGS <<< "${DOCKER_GPU_ARGS}"
+DOCKER_GPU_ARGS="${DOCKER_GPU_ARGS:-}"
 
 if [[ ! -f "${MODEL_DIR}/config.json" ]]; then
   echo "config.json not found: ${MODEL_DIR}/config.json" >&2
@@ -14,6 +13,23 @@ fi
 docker image inspect "${IMAGE_TAG}" >/dev/null
 MODEL_DIR_ABS="$(cd "${MODEL_DIR}" && pwd)"
 SMOKE_CONTAINER="a-cong-vllm-offline-validate-$$"
+
+if [[ -n "${DOCKER_GPU_ARGS}" ]]; then
+  read -r -a GPU_ARGS <<< "${DOCKER_GPU_ARGS}"
+else
+  echo "Detecting Docker GPU option..."
+  if docker run --rm \
+      --network none \
+      --gpus all \
+      --entrypoint python3 \
+      "${IMAGE_TAG}" \
+      -c "import torch; raise SystemExit(0 if torch.cuda.is_available() else 1)" >/dev/null 2>&1; then
+    GPU_ARGS=(--gpus all)
+  else
+    GPU_ARGS=(--runtime=nvidia)
+  fi
+fi
+echo "Using Docker GPU args: ${GPU_ARGS[*]}"
 
 cleanup() {
   docker rm -f "${SMOKE_CONTAINER}" >/dev/null 2>&1 || true
