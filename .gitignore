@@ -5,11 +5,13 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.tmp/
 model_cache/
 news_data/
 news_models/
 news_output/
 news_pdfs/
+logs/
 python_multipart/
 *.pyc
 *.pyo

@@ -19,8 +19,11 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.config import get_settings
 from app.db.models import Article, Job, Page, PdfFile
 from app.schemas.job import JobDetailResponse, JobRunDailyRequest
+from app.services.archived_results import sync_archived_job_index
 from app.services.captions import caption_entries_by_image_order, flatten_caption_entries
+from app.services.file_scanner import SUPPORTED_INPUT_SUFFIXES
 from app.services.job_runner import JobRunner
+from app.services.job_options import normalize_job_ocr_options
 from app.services.job_scheduler import get_job_scheduler
 from app.services.news_delivery import NewsDeliveryClient, NewsDeliveryError
 from app.services.preview_builder import build_page_preview
@@ -76,12 +79,17 @@ class DemoJobDeliverySummary:
     delivered_marks: int
     failed_marks: int
     pending_marks: int
+    validation_status: str
+    ready_count: int
+    warning_count: int
+    blocked_count: int
     verified_payload_count: int
     endpoint: str | None
     response_code: int | None
     batch_size: int | None
     updated_at: str | None
     note: str | None
+    validation_summary: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -194,6 +202,7 @@ class DemoArticleDetail:
     relevance_model: str | None
     relevance_source: str | None
     delivery_status: str
+    ocr_quality: Any | None = None
     delivery_endpoint: str | None = None
     delivery_response_code: int | None = None
     delivery_batch_size: int | None = None
@@ -228,6 +237,7 @@ class DemoService:
         self.settings = get_settings()
         self.storage = OutputStorage()
         self.delivery = NewsDeliveryClient()
+        self._archive_sync_done = False
 
     def build_jobs_page(
         self,
@@ -238,6 +248,7 @@ class DemoService:
         selected_preview_page_id: int | None = None,
         limit: int = 12,
     ) -> dict[str, Any]:
+        self.sync_archived_results(db)
         jobs = self.list_recent_jobs(db, limit=limit)
         selected_job = self._resolve_selected_job(db, jobs, selected_job_key, selected_article_id)
         browser = self.build_job_browser(db, selected_job) if selected_job is not None else []
@@ -264,6 +275,13 @@ class DemoService:
             "article_detail": detail,
             "auto_refresh_seconds": 2 if selected_job is not None and selected_job.status in {"queued", "running"} else None,
         }
+
+    def sync_archived_results(self, db: Session, *, force: bool = False) -> int:
+        if self._archive_sync_done and not force:
+            return 0
+        imported = sync_archived_job_index(db, self.storage)
+        self._archive_sync_done = True
+        return imported
 
     def list_recent_jobs(self, db: Session, *, limit: int = 12) -> list[DemoJobSummary]:
         rows = list(db.scalars(select(Job).order_by(Job.requested_at.desc(), Job.id.desc())))
@@ -384,6 +402,7 @@ class DemoService:
         articles = [article for file_result in result.files for article in file_result.articles]
         if not articles:
             return None
+        preview = self.delivery.build_payload_preview(articles)
 
         delivered_marks = 0
         failed_marks = 0
@@ -447,6 +466,11 @@ class DemoService:
             delivered_marks=delivered_marks,
             failed_marks=failed_marks,
             pending_marks=pending_marks,
+            validation_status=str(preview.get("delivery_status") or "unknown"),
+            ready_count=self._as_int(preview.get("ready_count")) or 0,
+            warning_count=self._as_int(preview.get("warning_count")) or 0,
+            blocked_count=self._as_int(preview.get("blocked_count")) or 0,
+            validation_summary=[str(item) for item in preview.get("validation_summary", []) if str(item).strip()],
             verified_payload_count=verified_payload_count,
             endpoint=endpoint,
             response_code=response_code,
@@ -769,6 +793,7 @@ class DemoService:
                 state.get("enrichment_payload", {}).get("relevance_source"),
             )
             or None,
+            ocr_quality=metadata.get("ocr_quality") if isinstance(metadata.get("ocr_quality"), dict) else None,
             delivery_status=str(state.get("delivery_status") or "not_configured"),
             delivery_endpoint=self._pick_first_text(delivery_payload.get("endpoint")) or None,
             delivery_response_code=self._as_int(delivery_payload.get("response_code")),
@@ -850,6 +875,7 @@ class DemoService:
         *,
         source_dir: str | None = None,
         callback_url: str | None = None,
+        ocr_options: dict[str, Any] | None = None,
     ) -> Job:
         requested_source_dir = (source_dir or "").strip()
         translated_source_dir = self.settings.translate_source_dir(requested_source_dir or None)
@@ -861,10 +887,10 @@ class DemoService:
 
         runner = JobRunner(db)
         job = runner.create_job(
-            JobRunDailyRequest(
+            self._build_job_request(
                 source_dir=str(resolved_source_dir),
                 callback_url=(callback_url or "").strip() or None,
-                force_reprocess=True,
+                ocr_options=ocr_options,
             )
         )
         db.commit()
@@ -878,29 +904,31 @@ class DemoService:
         *,
         pdf_path: str,
         callback_url: str | None = None,
+        ocr_options: dict[str, Any] | None = None,
     ) -> Job:
         requested_pdf_path = Path((pdf_path or "").strip()).expanduser()
         if not str(requested_pdf_path).strip():
-            raise DemoServiceError("pdf path is required", status_code=400)
+            raise DemoServiceError("source file path is required", status_code=400)
         if not requested_pdf_path.exists():
-            raise DemoServiceError(f"pdf file not found: {requested_pdf_path}", status_code=404)
+            raise DemoServiceError(f"source file not found: {requested_pdf_path}", status_code=404)
         if not requested_pdf_path.is_file():
-            raise DemoServiceError(f"pdf path is not a file: {requested_pdf_path}", status_code=400)
-        if requested_pdf_path.suffix.lower() != ".pdf":
-            raise DemoServiceError("only .pdf files are supported", status_code=400)
+            raise DemoServiceError(f"source path is not a file: {requested_pdf_path}", status_code=400)
+        if requested_pdf_path.suffix.lower() not in SUPPORTED_INPUT_SUFFIXES:
+            allowed = ", ".join(sorted(SUPPORTED_INPUT_SUFFIXES))
+            raise DemoServiceError(f"only these file types are supported: {allowed}", status_code=400)
 
         staging_root = self.settings.output_root / "_operator_manual"
         staging_root.mkdir(parents=True, exist_ok=True)
-        staging_dir = Path(tempfile.mkdtemp(prefix="manual_pdf_", dir=str(staging_root)))
+        staging_dir = Path(tempfile.mkdtemp(prefix="manual_source_", dir=str(staging_root)))
         staged_pdf = staging_dir / requested_pdf_path.name
         shutil.copy2(requested_pdf_path, staged_pdf)
 
         runner = JobRunner(db)
         job = runner.create_job(
-            JobRunDailyRequest(
+            self._build_job_request(
                 source_dir=str(staging_dir),
                 callback_url=(callback_url or "").strip() or None,
-                force_reprocess=True,
+                ocr_options=ocr_options,
             )
         )
         db.commit()
@@ -915,14 +943,15 @@ class DemoService:
         filename: str,
         content: bytes,
         callback_url: str | None = None,
+        ocr_options: dict[str, Any] | None = None,
     ) -> Job:
-        staging_dir = self._stage_uploaded_pdfs([(filename, content)], prefix="manual_upload_")
+        staging_dir = self._stage_uploaded_sources([(filename, content)], prefix="manual_upload_")
         runner = JobRunner(db)
         job = runner.create_job(
-            JobRunDailyRequest(
+            self._build_job_request(
                 source_dir=str(staging_dir),
                 callback_url=(callback_url or "").strip() or None,
-                force_reprocess=True,
+                ocr_options=ocr_options,
             )
         )
         db.commit()
@@ -936,20 +965,43 @@ class DemoService:
         *,
         files: list[tuple[str, bytes]],
         callback_url: str | None = None,
+        ocr_options: dict[str, Any] | None = None,
     ) -> Job:
-        staging_dir = self._stage_uploaded_pdfs(files, prefix="manual_folder_")
+        staging_dir = self._stage_uploaded_sources(files, prefix="manual_folder_")
         runner = JobRunner(db)
         job = runner.create_job(
-            JobRunDailyRequest(
+            self._build_job_request(
                 source_dir=str(staging_dir),
                 callback_url=(callback_url or "").strip() or None,
-                force_reprocess=True,
+                ocr_options=ocr_options,
             )
         )
         db.commit()
         db.refresh(job)
         await get_job_scheduler().schedule(job.id)
         return job
+
+    def _build_job_request(
+        self,
+        *,
+        source_dir: str,
+        callback_url: str | None = None,
+        ocr_options: dict[str, Any] | None = None,
+    ) -> JobRunDailyRequest:
+        normalized_options = normalize_job_ocr_options(ocr_options or {})
+        return JobRunDailyRequest(
+            source_dir=source_dir,
+            callback_url=callback_url,
+            force_reprocess=True,
+            ocr_mode=normalized_options["ocr_mode"],
+            page_range=normalized_options["page_range"],
+            max_pages=normalized_options["max_pages"],
+            output_format=normalized_options["output_format"],
+            paginate=normalized_options["paginate"],
+            add_block_ids=normalized_options["add_block_ids"],
+            include_markdown_in_chunks=normalized_options["include_markdown_in_chunks"],
+            skip_cache=normalized_options["skip_cache"],
+        )
 
     async def redeliver_article(self, db: Session, article_id: int) -> DemoMessage:
         article = self._load_article_context(db, article_id)
@@ -1036,6 +1088,24 @@ class DemoService:
             )
             raise DemoServiceError(f"redelivery failed: {exc}", status_code=502) from exc
 
+    def deliver_job(self, db: Session, job_key: str) -> DemoMessage:
+        job = db.scalar(select(Job).where(Job.job_key == job_key))
+        if job is None:
+            raise DemoServiceError("job not found", status_code=404)
+
+        result = build_job_result(db, job)
+        try:
+            delivery_result = self.delivery.deliver_job_result(result)
+        except NewsDeliveryError as exc:
+            raise DemoServiceError(exc.message, status_code=exc.status_code) from exc
+
+        if delivery_result.failed > 0:
+            return DemoMessage(
+                level="warning",
+                text=f"국회 API 전송 완료: 성공 {delivery_result.delivered}건, 실패 {delivery_result.failed}건",
+            )
+        return DemoMessage(level="success", text=f"국회 API 전송 완료: {delivery_result.delivered}건")
+
     def delete_job(self, db: Session, job_key: str) -> DemoMessage:
         job = db.scalar(select(Job).where(Job.job_key == job_key))
         if job is None:
@@ -1051,7 +1121,7 @@ class DemoService:
                 continue
         return DemoMessage(level="success", text=f"작업을 삭제했습니다: {job_key}")
 
-    def _stage_uploaded_pdfs(self, files: list[tuple[str, bytes]], *, prefix: str) -> Path:
+    def _stage_uploaded_sources(self, files: list[tuple[str, bytes]], *, prefix: str) -> Path:
         staging_root = self.settings.output_root / "_operator_uploads"
         staging_root.mkdir(parents=True, exist_ok=True)
         staging_dir = Path(tempfile.mkdtemp(prefix=prefix, dir=str(staging_root)))
@@ -1061,7 +1131,7 @@ class DemoService:
         for index, (raw_name, content) in enumerate(files, start=1):
             if not content:
                 continue
-            safe_name = self._safe_uploaded_pdf_name(raw_name, index=index, used_names=used_names)
+            safe_name = self._safe_uploaded_source_name(raw_name, index=index, used_names=used_names)
             if safe_name is None:
                 continue
             (staging_dir / safe_name).write_bytes(content)
@@ -1069,20 +1139,20 @@ class DemoService:
 
         if written <= 0:
             shutil.rmtree(staging_dir, ignore_errors=True)
-            raise DemoServiceError("업로드된 PDF가 없습니다.", status_code=400)
+            raise DemoServiceError("업로드된 PDF/이미지 파일이 없습니다.", status_code=400)
         return staging_dir
 
     @staticmethod
-    def _safe_uploaded_pdf_name(raw_name: str, *, index: int, used_names: set[str]) -> str | None:
+    def _safe_uploaded_source_name(raw_name: str, *, index: int, used_names: set[str]) -> str | None:
         normalized = str(raw_name or "").replace("\\", "/").strip()
         parts = [part for part in normalized.split("/") if part not in {"", ".", ".."}]
         candidate = "__".join(parts) if parts else f"upload_{index:02d}.pdf"
         parsed = Path(candidate)
-        if parsed.suffix.lower() != ".pdf":
+        if parsed.suffix.lower() not in SUPPORTED_INPUT_SUFFIXES:
             return None
 
         stem = parsed.stem.strip() or f"upload_{index:02d}"
-        suffix = ".pdf"
+        suffix = parsed.suffix.lower()
         safe_name = f"{stem}{suffix}"
         duplicate_index = 2
         while safe_name.lower() in used_names:

@@ -11,11 +11,19 @@ from app.services.artifacts import JobArtifactLayout
 def _load_pymupdf():
     try:
         import fitz
+    except ImportError:
+        return None
+    return fitz
+
+
+def _load_pypdfium2():
+    try:
+        import pypdfium2 as pdfium
     except ImportError as exc:
         raise RuntimeError(
-            "PyMuPDF is required to render PDFs. Install the 'PyMuPDF' package."
+            "PDF 렌더링에 PyMuPDF 또는 pypdfium2가 필요합니다. requirements.ui.txt 또는 requirements.txt를 다시 설치하세요."
         ) from exc
-    return fitz
+    return pdfium
 
 
 def _read_existing_png_size(image_path: Path) -> tuple[int, int]:
@@ -23,20 +31,15 @@ def _read_existing_png_size(image_path: Path) -> tuple[int, int]:
         return int(image.width), int(image.height)
 
 
-def render_pdf_document(
-    pdf_path: str | Path,
+def _render_with_pymupdf(
+    pdf_path: Path,
     artifact_layout: JobArtifactLayout,
     *,
-    dpi: int = 200,
-) -> RenderedPdf:
-    pdf_path = Path(pdf_path)
-    if not pdf_path.exists():
-        raise FileNotFoundError(f"PDF file was not found: {pdf_path}")
-    if dpi <= 0:
-        raise ValueError("DPI must be a positive integer.")
-
-    artifact_layout.ensure()
+    dpi: int,
+) -> list[PageImageArtifact]:
     fitz = _load_pymupdf()
+    if fitz is None:
+        return []
     scale = dpi / 72.0
     matrix = fitz.Matrix(scale, scale)
 
@@ -68,6 +71,74 @@ def render_pdf_document(
             )
     finally:
         document.close()
+    return pages
+
+
+def _render_with_pypdfium2(
+    pdf_path: Path,
+    artifact_layout: JobArtifactLayout,
+    *,
+    dpi: int,
+) -> list[PageImageArtifact]:
+    pdfium = _load_pypdfium2()
+    scale = dpi / 72.0
+    document = pdfium.PdfDocument(str(pdf_path))
+    try:
+        pages: list[PageImageArtifact] = []
+        for index in range(len(document)):
+            page_no = index + 1
+            image_path = artifact_layout.page_image_path(page_no)
+            if image_path.exists():
+                width, height = _read_existing_png_size(image_path)
+            else:
+                page = document[index]
+                try:
+                    bitmap = page.render(scale=scale)
+                    image = bitmap.to_pil()
+                    if image.mode not in {"RGB", "RGBA"}:
+                        image = image.convert("RGB")
+                    image_path.parent.mkdir(parents=True, exist_ok=True)
+                    image.save(image_path)
+                    width = int(image.width)
+                    height = int(image.height)
+                finally:
+                    close_page = getattr(page, "close", None)
+                    if callable(close_page):
+                        close_page()
+
+            pages.append(
+                PageImageArtifact(
+                    page_no=page_no,
+                    image_path=image_path,
+                    width=width,
+                    height=height,
+                    source_pdf=pdf_path,
+                    dpi=dpi,
+                )
+            )
+    finally:
+        close_document = getattr(document, "close", None)
+        if callable(close_document):
+            close_document()
+    return pages
+
+
+def render_pdf_document(
+    pdf_path: str | Path,
+    artifact_layout: JobArtifactLayout,
+    *,
+    dpi: int = 200,
+) -> RenderedPdf:
+    pdf_path = Path(pdf_path)
+    if not pdf_path.exists():
+        raise FileNotFoundError(f"PDF file was not found: {pdf_path}")
+    if dpi <= 0:
+        raise ValueError("DPI must be a positive integer.")
+
+    artifact_layout.ensure()
+    pages = _render_with_pymupdf(pdf_path, artifact_layout, dpi=dpi)
+    if not pages:
+        pages = _render_with_pypdfium2(pdf_path, artifact_layout, dpi=dpi)
 
     return RenderedPdf(
         pdf_path=pdf_path,

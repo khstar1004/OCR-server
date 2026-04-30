@@ -118,3 +118,50 @@ def test_render_pdf_and_reuse_existing_raw_ocr_outputs(tmp_path, monkeypatch) ->
     rerun_result = run_chandra_ocr(rendered, data_dir, "job-001", batch_size=2, runner=should_not_run)
     assert rerun_result.pages[0].json_path == layout.ocr_json_path(1)
     assert layout.ocr_markdown_path(1).read_text(encoding="utf-8") == first_markdown
+
+
+def test_render_pdf_falls_back_to_pypdfium2_when_pymupdf_is_missing(tmp_path, monkeypatch) -> None:
+    monkeypatch.setitem(sys.modules, "fitz", None)
+
+    class FakeBitmap:
+        def __init__(self, width: int, height: int) -> None:
+            self.width = width
+            self.height = height
+
+        def to_pil(self) -> Image.Image:
+            return Image.new("RGB", (self.width, self.height), color="white")
+
+    class FakePage:
+        def render(self, *, scale: float) -> FakeBitmap:
+            return FakeBitmap(width=int(600 * scale), height=int(900 * scale))
+
+        def close(self) -> None:
+            return None
+
+    class FakeDocument:
+        def __init__(self, path: str) -> None:
+            self.path = path
+
+        def __len__(self) -> int:
+            return 1
+
+        def __getitem__(self, index: int) -> FakePage:
+            if index != 0:
+                raise IndexError(index)
+            return FakePage()
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setitem(sys.modules, "pypdfium2", SimpleNamespace(PdfDocument=FakeDocument))
+
+    pdf_path = tmp_path / "sample-news.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    data_dir = tmp_path / "data"
+
+    rendered = render_pdf(pdf_path, data_dir, job_id="job-002", dpi=144)
+
+    assert rendered.page_count == 1
+    assert rendered.pages[0].width == 1200
+    assert rendered.pages[0].height == 1800
+    assert rendered.pages[0].image_path.exists()

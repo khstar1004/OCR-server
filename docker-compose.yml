@@ -1,62 +1,146 @@
 services:
   app:
+    profiles: ["remote-ocr"]
     env_file:
       - ./.env
-    image: ${APP_IMAGE:-a-cong-ocr:chandra}
+    image: ${UI_IMAGE:-a-cong-ocr-ui:chandra}
     build:
       context: .
-      dockerfile: Dockerfile
-      args:
-        TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu124}
-        TORCH_PACKAGES: ${TORCH_PACKAGES:-torch==2.6.0+cu124 torchvision==0.21.0+cu124}
-        PRELOAD_CHANDRA: ${PRELOAD_CHANDRA:-false}
-        CHANDRA_MODEL_ID: ${CHANDRA_MODEL_ID:-datalab-to/chandra-ocr-2}
-        CHANDRA_MODEL_DIR: /models/chandra-ocr-2
-    runtime: nvidia
+      dockerfile: Dockerfile.ui
+    depends_on:
+      ocr-service:
+        condition: service_healthy
     ports:
-      - "${API_HOST_PORT:-18007}:8000"
+      - "${API_HOST_PORT:-18007}:5000"
     environment:
       APP_ENV: docker
+      ROOT_PATH: ${ROOT_PATH:-}
       API_PREFIX: ${API_PREFIX:-/api/v1}
       WATCH_DIR: /data/watch
       DATA_DIR: /data/runtime
+      POLL_INTERVAL_SEC: ${POLL_INTERVAL_SEC:-1.0}
+      STABLE_SCAN_COUNT: ${STABLE_SCAN_COUNT:-2}
       DATABASE_URL: sqlite:////data/runtime/db/news_ocr.db
       AUTO_CREATE_TABLES: "true"
       INPUT_ROOT: /data/watch
       OUTPUT_ROOT: /data/runtime/output
       MODELS_ROOT: /models
+      RUNTIME_CONFIG_PATH: ${RUNTIME_CONFIG_PATH:-/data/runtime/runtime-config/settings.json}
+      AUTH_STORE_PATH: ${AUTH_STORE_PATH:-/data/runtime/runtime-config/auth.json}
+      PLAYGROUND_ADMIN_USERNAME: ${PLAYGROUND_ADMIN_USERNAME:-admin}
+      PLAYGROUND_ADMIN_PASSWORD: ${PLAYGROUND_ADMIN_PASSWORD:-admin123!}
+      PLAYGROUND_ADMIN_EMAIL: ${PLAYGROUND_ADMIN_EMAIL:-admin@local}
+      PLAYGROUND_SESSION_DAYS: ${PLAYGROUND_SESSION_DAYS:-7}
       OCR_BACKEND: ${OCR_BACKEND:-chandra}
-      OCR_SERVICE_URL: ${OCR_SERVICE_URL-}
+      OCR_SERVICE_URL: ${OCR_SERVICE_URL:-http://ocr-service:8000}
       OCR_SERVICE_MODE: ${OCR_SERVICE_MODE:-native}
       OCR_SERVICE_API_KEY: ${OCR_SERVICE_API_KEY-}
-      OCR_SERVICE_TIMEOUT_SEC: ${OCR_SERVICE_TIMEOUT_SEC:-300.0}
+      OCR_SERVICE_TIMEOUT_SEC: ${OCR_SERVICE_TIMEOUT_SEC:-0}
       OCR_SERVICE_POLL_INTERVAL_SEC: ${OCR_SERVICE_POLL_INTERVAL_SEC:-2.0}
       OCR_SERVICE_MARKER_MODE: ${OCR_SERVICE_MARKER_MODE:-accurate}
+      OCR_MAX_CONCURRENT_REQUESTS: ${OCR_MAX_CONCURRENT_REQUESTS:-1}
+      PLAYGROUND_OPERATOR_DEMO_URL: ${PLAYGROUND_OPERATOR_DEMO_URL:-}
+      PLAYGROUND_DEFAULT_MAX_PAGES: ${PLAYGROUND_DEFAULT_MAX_PAGES:-10}
+      PLAYGROUND_MAX_UPLOAD_MB: ${PLAYGROUND_MAX_UPLOAD_MB:-512}
       OCR_OFFLINE: ${OCR_OFFLINE:-true}
-      OCR_DEVICE: ${OCR_DEVICE:-gpu}
+      OCR_DEVICE: remote
       OCR_RETRY_LOW_QUALITY: ${OCR_RETRY_LOW_QUALITY:-true}
       OCR_QUALITY_MIN_CHARS: ${OCR_QUALITY_MIN_CHARS:-80}
       OCR_QUALITY_MIN_KOREAN_RATIO: ${OCR_QUALITY_MIN_KOREAN_RATIO:-0.35}
       PDF_RENDER_DPI: ${PDF_RENDER_DPI:-300}
-      CHANDRA_METHOD: ${CHANDRA_METHOD:-hf}
+      CHANDRA_METHOD: vllm
       CHANDRA_MODEL_ID: ${CHANDRA_MODEL_ID:-datalab-to/chandra-ocr-2}
-      CHANDRA_MODEL_DIR: ${CHANDRA_MODEL_DIR:-/models/chandra-ocr-2}
+      CHANDRA_MODEL_DIR: ""
       CHANDRA_PROMPT_TYPE: ${CHANDRA_PROMPT_TYPE:-ocr_layout}
       CHANDRA_BATCH_SIZE: ${CHANDRA_BATCH_SIZE:-1}
       CHANDRA_DEVICE_MAP: ${CHANDRA_DEVICE_MAP:-auto}
       CHANDRA_DTYPE: ${CHANDRA_DTYPE:-bfloat16}
       VLLM_API_BASE: ${VLLM_API_BASE:-http://vllm-ocr:8000/v1}
       VLLM_MODEL_NAME: ${VLLM_MODEL_NAME:-chandra-ocr-2}
+      VLLM_MODEL_PATH: ${VLLM_MODEL_PATH:-/models/chandra-ocr-2}
       MAX_VLLM_RETRIES: ${MAX_VLLM_RETRIES:-6}
+      VLLM_MAX_MODEL_LEN: ${VLLM_MAX_MODEL_LEN:-18000}
+      VLLM_GPU_MEMORY_UTILIZATION: ${VLLM_GPU_MEMORY_UTILIZATION:-0.85}
+      VLLM_MAX_NUM_SEQS: ${VLLM_MAX_NUM_SEQS:-1}
+      VLLM_MM_PROCESSOR_KWARGS: ${VLLM_MM_PROCESSOR_KWARGS:-{\"min_pixels\":3136,\"max_pixels\":6291456}}
       HF_HOME: /opt/model-cache/huggingface
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-oss-20b}
+      LLM_TIMEOUT_SEC: ${LLM_TIMEOUT_SEC:-20}
+      TARGET_API_BASE_URL: ${TARGET_API_BASE_URL:-}
+      TARGET_API_TIMEOUT_SEC: ${TARGET_API_TIMEOUT_SEC:-30}
+      CALLBACK_TIMEOUT_SECONDS: ${CALLBACK_TIMEOUT_SECONDS:-30}
       DEMO_REDELIVER_HOOK: ${DEMO_REDELIVER_HOOK:-}
       ARTICLE_REDELIVER_HOOK: ${ARTICLE_REDELIVER_HOOK:-}
     volumes:
       - ${WATCH_DIR:-./news_pdfs}:/data/watch
       - ${DATA_DIR:-./news_data}:/data/runtime
-      - ${MODELS_DIR:-./news_models}:/models
-      - ${MODEL_CACHE_DIR:-./model_cache}:/opt/model-cache
-    command: ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "5000"]
+    restart: unless-stopped
+
+  playground:
+    profiles: ["remote-ocr"]
+    env_file:
+      - ./.env
+    image: ${UI_IMAGE:-a-cong-ocr-ui:chandra}
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    depends_on:
+      ocr-service:
+        condition: service_healthy
+    ports:
+      - "${PLAYGROUND_HOST_PORT:-18109}:5000"
+    environment:
+      APP_ENV: docker
+      ROOT_PATH: ${PLAYGROUND_ROOT_PATH:-}
+      API_PREFIX: ${API_PREFIX:-/api/v1}
+      OCR_SERVICE_URL: ${OCR_SERVICE_URL:-http://ocr-service:8000}
+      PLAYGROUND_UPSTREAM_BASE_URL: ${PLAYGROUND_UPSTREAM_BASE_URL:-http://ocr-service:8000}
+      PLAYGROUND_OPERATOR_DEMO_URL: ${PLAYGROUND_OPERATOR_DEMO_URL:-http://127.0.0.1:18007/demo/jobs}
+      RUNTIME_CONFIG_PATH: ${RUNTIME_CONFIG_PATH:-/data/runtime/runtime-config/settings.json}
+      AUTH_STORE_PATH: ${AUTH_STORE_PATH:-/data/runtime/runtime-config/auth.json}
+      PLAYGROUND_ADMIN_USERNAME: ${PLAYGROUND_ADMIN_USERNAME:-admin}
+      PLAYGROUND_ADMIN_PASSWORD: ${PLAYGROUND_ADMIN_PASSWORD:-admin123!}
+      PLAYGROUND_ADMIN_EMAIL: ${PLAYGROUND_ADMIN_EMAIL:-admin@local}
+      PLAYGROUND_SESSION_DAYS: ${PLAYGROUND_SESSION_DAYS:-7}
+      OCR_SERVICE_MODE: ${OCR_SERVICE_MODE:-native}
+      OCR_SERVICE_TIMEOUT_SEC: ${OCR_SERVICE_TIMEOUT_SEC:-0}
+      OCR_SERVICE_POLL_INTERVAL_SEC: ${OCR_SERVICE_POLL_INTERVAL_SEC:-2.0}
+      OCR_SERVICE_MARKER_MODE: ${OCR_SERVICE_MARKER_MODE:-accurate}
+      OCR_MAX_CONCURRENT_REQUESTS: ${OCR_MAX_CONCURRENT_REQUESTS:-1}
+      OCR_RETRY_LOW_QUALITY: ${OCR_RETRY_LOW_QUALITY:-true}
+      OCR_QUALITY_MIN_CHARS: ${OCR_QUALITY_MIN_CHARS:-80}
+      OCR_QUALITY_MIN_KOREAN_RATIO: ${OCR_QUALITY_MIN_KOREAN_RATIO:-0.35}
+      PDF_RENDER_DPI: ${PDF_RENDER_DPI:-300}
+      PLAYGROUND_DEFAULT_MAX_PAGES: ${PLAYGROUND_DEFAULT_MAX_PAGES:-10}
+      PLAYGROUND_MAX_UPLOAD_MB: ${PLAYGROUND_MAX_UPLOAD_MB:-512}
+      OCR_OFFLINE: ${OCR_OFFLINE:-true}
+      OCR_DEVICE: remote
+      CHANDRA_METHOD: vllm
+      CHANDRA_PROMPT_TYPE: ${CHANDRA_PROMPT_TYPE:-ocr_layout}
+      CHANDRA_BATCH_SIZE: ${CHANDRA_BATCH_SIZE:-1}
+      CHANDRA_MODEL_DIR: ""
+      VLLM_API_BASE: ${VLLM_API_BASE:-http://vllm-ocr:8000/v1}
+      VLLM_MODEL_NAME: ${VLLM_MODEL_NAME:-chandra-ocr-2}
+      VLLM_MODEL_PATH: ${VLLM_MODEL_PATH:-/models/chandra-ocr-2}
+      MAX_VLLM_RETRIES: ${MAX_VLLM_RETRIES:-6}
+      VLLM_MAX_MODEL_LEN: ${VLLM_MAX_MODEL_LEN:-18000}
+      VLLM_GPU_MEMORY_UTILIZATION: ${VLLM_GPU_MEMORY_UTILIZATION:-0.85}
+      VLLM_MAX_NUM_SEQS: ${VLLM_MAX_NUM_SEQS:-1}
+      VLLM_MM_PROCESSOR_KWARGS: ${VLLM_MM_PROCESSOR_KWARGS:-{\"min_pixels\":3136,\"max_pixels\":6291456}}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-oss-20b}
+      LLM_TIMEOUT_SEC: ${LLM_TIMEOUT_SEC:-20}
+      TARGET_API_BASE_URL: ${TARGET_API_BASE_URL:-}
+      TARGET_API_TIMEOUT_SEC: ${TARGET_API_TIMEOUT_SEC:-30}
+      CALLBACK_TIMEOUT_SECONDS: ${CALLBACK_TIMEOUT_SECONDS:-30}
+      POLL_INTERVAL_SEC: ${POLL_INTERVAL_SEC:-1.0}
+      STABLE_SCAN_COUNT: ${STABLE_SCAN_COUNT:-2}
+      INPUT_ROOT: /data/watch
+      OUTPUT_ROOT: /data/runtime/output
+      MODELS_ROOT: /models
+    command: ["python3", "-m", "uvicorn", "app.playground_proxy:app", "--host", "0.0.0.0", "--port", "5000"]
     restart: unless-stopped
 
   ocr-service:
@@ -85,10 +169,23 @@ services:
       INPUT_ROOT: /data/input
       OUTPUT_ROOT: /data/runtime/output
       MODELS_ROOT: /models
+      RUNTIME_CONFIG_PATH: ${RUNTIME_CONFIG_PATH:-/data/runtime/runtime-config/settings.json}
+      AUTH_STORE_PATH: ${AUTH_STORE_PATH:-/data/runtime/runtime-config/auth.json}
+      PLAYGROUND_ADMIN_USERNAME: ${PLAYGROUND_ADMIN_USERNAME:-admin}
+      PLAYGROUND_ADMIN_PASSWORD: ${PLAYGROUND_ADMIN_PASSWORD:-admin123!}
+      PLAYGROUND_ADMIN_EMAIL: ${PLAYGROUND_ADMIN_EMAIL:-admin@local}
+      PLAYGROUND_SESSION_DAYS: ${PLAYGROUND_SESSION_DAYS:-7}
       OCR_BACKEND: ${OCR_BACKEND:-chandra}
       OCR_OFFLINE: ${OCR_OFFLINE:-true}
       OCR_DEVICE: ${OCR_DEVICE:-gpu}
+      OCR_SERVICE_MODE: ${OCR_SERVICE_MODE:-native}
       OCR_SERVICE_TIMEOUT_SEC: ${OCR_SERVICE_TIMEOUT_SEC:-300.0}
+      OCR_SERVICE_POLL_INTERVAL_SEC: ${OCR_SERVICE_POLL_INTERVAL_SEC:-2.0}
+      OCR_SERVICE_MARKER_MODE: ${OCR_SERVICE_MARKER_MODE:-accurate}
+      OCR_MAX_CONCURRENT_REQUESTS: ${OCR_MAX_CONCURRENT_REQUESTS:-1}
+      PLAYGROUND_OPERATOR_DEMO_URL: ${PLAYGROUND_OPERATOR_DEMO_URL:-}
+      PLAYGROUND_DEFAULT_MAX_PAGES: ${PLAYGROUND_DEFAULT_MAX_PAGES:-10}
+      PLAYGROUND_MAX_UPLOAD_MB: ${PLAYGROUND_MAX_UPLOAD_MB:-512}
       OCR_RETRY_LOW_QUALITY: ${OCR_RETRY_LOW_QUALITY:-true}
       OCR_QUALITY_MIN_CHARS: ${OCR_QUALITY_MIN_CHARS:-80}
       OCR_QUALITY_MIN_KOREAN_RATIO: ${OCR_QUALITY_MIN_KOREAN_RATIO:-0.35}
@@ -102,10 +199,16 @@ services:
       CHANDRA_DTYPE: ${CHANDRA_DTYPE:-bfloat16}
       VLLM_API_BASE: ${VLLM_API_BASE:-http://vllm-ocr:8000/v1}
       VLLM_MODEL_NAME: ${VLLM_MODEL_NAME:-chandra-ocr-2}
+      VLLM_MODEL_PATH: ${VLLM_MODEL_PATH:-/models/chandra-ocr-2}
       MAX_VLLM_RETRIES: ${MAX_VLLM_RETRIES:-6}
+      VLLM_MAX_MODEL_LEN: ${VLLM_MAX_MODEL_LEN:-18000}
+      VLLM_GPU_MEMORY_UTILIZATION: ${VLLM_GPU_MEMORY_UTILIZATION:-0.85}
+      VLLM_MAX_NUM_SEQS: ${VLLM_MAX_NUM_SEQS:-1}
+      VLLM_MM_PROCESSOR_KWARGS: ${VLLM_MM_PROCESSOR_KWARGS:-{\"min_pixels\":3136,\"max_pixels\":6291456}}
       HF_HOME: /opt/model-cache/huggingface
       OCR_SERVICE_URL: ""
     volumes:
+      - ${DATA_DIR:-./news_data}:/data/runtime
       - ${MODELS_DIR:-./news_models}:/models
       - ${MODEL_CACHE_DIR:-./model_cache}:/opt/model-cache
     restart: unless-stopped
@@ -130,9 +233,17 @@ services:
       HF_HOME: /root/.cache/huggingface
       HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-1}
       TRANSFORMERS_OFFLINE: ${TRANSFORMERS_OFFLINE:-1}
+      RUNTIME_CONFIG_PATH: ${RUNTIME_CONFIG_PATH:-/data/runtime/runtime-config/settings.json}
+      VLLM_MODEL_PATH: ${VLLM_MODEL_PATH:-/models/chandra-ocr-2}
+      VLLM_MODEL_NAME: ${VLLM_MODEL_NAME:-chandra-ocr-2}
+      VLLM_MAX_MODEL_LEN: ${VLLM_MAX_MODEL_LEN:-18000}
+      VLLM_GPU_MEMORY_UTILIZATION: ${VLLM_GPU_MEMORY_UTILIZATION:-0.85}
+      VLLM_MAX_NUM_SEQS: ${VLLM_MAX_NUM_SEQS:-1}
+      VLLM_MM_PROCESSOR_KWARGS: ${VLLM_MM_PROCESSOR_KWARGS:-{\"min_pixels\":3136,\"max_pixels\":6291456}}
     volumes:
       - ${MODELS_DIR:-./news_models}:/models:ro
       - ${MODEL_CACHE_DIR:-./model_cache}:/root/.cache/huggingface
+      - ${DATA_DIR:-./news_data}:/data/runtime:ro
     restart: unless-stopped
     healthcheck:
       test:
@@ -162,3 +273,5 @@ services:
       - --enable-prefix-caching
       - --mm-processor-kwargs
       - ${VLLM_MM_PROCESSOR_KWARGS:-{\"min_pixels\":3136,\"max_pixels\":6291456}}
+      - --max-num-seqs
+      - ${VLLM_MAX_NUM_SEQS:-1}

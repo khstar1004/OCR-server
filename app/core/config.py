@@ -1,4 +1,5 @@
 from functools import lru_cache
+import os
 from pathlib import Path
 
 from pydantic import Field
@@ -27,6 +28,7 @@ class Settings(BaseSettings):
     models_root_host: str | None = Field(default=None, alias="MODELS_ROOT_HOST")
     input_root: Path = Field(default=Path("./news_pdfs"), alias="INPUT_ROOT")
     output_root: Path = Field(default=Path("./news_output"), alias="OUTPUT_ROOT")
+    data_dir: Path = Field(default=Path("./data"), alias="DATA_DIR")
     models_root: Path = Field(default=Path("./news_models"), alias="MODELS_ROOT")
     pdf_render_dpi: int = Field(default=300, alias="PDF_RENDER_DPI")
     ocr_backend: str = Field(default="chandra", alias="OCR_BACKEND")
@@ -38,9 +40,12 @@ class Settings(BaseSettings):
     ocr_service_timeout_sec: float = Field(default=30.0, alias="OCR_SERVICE_TIMEOUT_SEC")
     ocr_service_poll_interval_sec: float = Field(default=2.0, alias="OCR_SERVICE_POLL_INTERVAL_SEC")
     ocr_service_marker_mode: str = Field(default="accurate", alias="OCR_SERVICE_MARKER_MODE")
+    ocr_max_concurrent_requests: int = Field(default=1, alias="OCR_MAX_CONCURRENT_REQUESTS")
     ocr_retry_low_quality: bool = Field(default=True, alias="OCR_RETRY_LOW_QUALITY")
     ocr_quality_min_chars: int = Field(default=80, alias="OCR_QUALITY_MIN_CHARS")
     ocr_quality_min_korean_ratio: float = Field(default=0.35, alias="OCR_QUALITY_MIN_KOREAN_RATIO")
+    poll_interval_sec: float = Field(default=1.0, alias="POLL_INTERVAL_SEC")
+    stable_scan_count: int = Field(default=2, alias="STABLE_SCAN_COUNT")
     llm_base_url: str | None = Field(default="http://183.107.244.138:8000/v1", alias="LLM_BASE_URL")
     llm_model: str | None = Field(default="gpt-oss-20b", alias="LLM_MODEL")
     llm_api_key: str | None = Field(default=None, alias="LLM_API_KEY")
@@ -55,15 +60,41 @@ class Settings(BaseSettings):
     vllm_api_base: str | None = Field(default=None, alias="VLLM_API_BASE")
     vllm_api_key: str | None = Field(default=None, alias="VLLM_API_KEY")
     vllm_model_name: str | None = Field(default=None, alias="VLLM_MODEL_NAME")
+    vllm_model_path: str | None = Field(default="/models/chandra-ocr-2", alias="VLLM_MODEL_PATH")
     vllm_max_retries: int = Field(default=6, alias="MAX_VLLM_RETRIES")
+    vllm_max_model_len: int = Field(default=18000, alias="VLLM_MAX_MODEL_LEN")
+    vllm_gpu_memory_utilization: float = Field(default=0.8, alias="VLLM_GPU_MEMORY_UTILIZATION")
+    vllm_mm_processor_kwargs: str | None = Field(
+        default='{"min_pixels":3136,"max_pixels":6291456}',
+        alias="VLLM_MM_PROCESSOR_KWARGS",
+    )
+    vllm_max_num_seqs: int = Field(default=1, alias="VLLM_MAX_NUM_SEQS")
     callback_timeout_seconds: int = Field(default=30, alias="CALLBACK_TIMEOUT_SECONDS")
     target_api_base_url: str | None = Field(default=None, alias="TARGET_API_BASE_URL")
     target_api_token: str | None = Field(default=None, alias="TARGET_API_TOKEN")
     target_api_timeout_sec: float = Field(default=30.0, alias="TARGET_API_TIMEOUT_SEC")
+    playground_upstream_base_url: str | None = Field(default=None, alias="PLAYGROUND_UPSTREAM_BASE_URL")
+    playground_operator_demo_url: str | None = Field(default=None, alias="PLAYGROUND_OPERATOR_DEMO_URL")
+    playground_default_max_pages: int = Field(default=10, alias="PLAYGROUND_DEFAULT_MAX_PAGES")
+    playground_max_upload_mb: int = Field(default=512, alias="PLAYGROUND_MAX_UPLOAD_MB")
+    runtime_config_path: Path | None = Field(default=None, alias="RUNTIME_CONFIG_PATH")
+    auth_store_path: Path | None = Field(default=None, alias="AUTH_STORE_PATH")
+    playground_admin_username: str = Field(default="admin", alias="PLAYGROUND_ADMIN_USERNAME")
+    playground_admin_password: str = Field(default="admin123!", alias="PLAYGROUND_ADMIN_PASSWORD")
+    playground_admin_email: str = Field(default="admin@local", alias="PLAYGROUND_ADMIN_EMAIL")
+    playground_session_days: int = Field(default=7, alias="PLAYGROUND_SESSION_DAYS")
 
     @property
     def normalized_root_path(self) -> str:
         return normalize_root_path(self.root_path)
+
+    @property
+    def watch_poll_interval_sec(self) -> float:
+        return self.poll_interval_sec
+
+    @property
+    def watch_stable_scan_count(self) -> int:
+        return self.stable_scan_count
 
     def ensure_directories(self) -> None:
         self.input_root.mkdir(parents=True, exist_ok=True)
@@ -96,10 +127,20 @@ class Settings(BaseSettings):
         if self.output_root_host:
             roots.append(Path(self.output_root_host).expanduser().resolve())
         roots.append(self.output_root.expanduser().resolve())
+        legacy_output = self._legacy_data_output_root()
+        if legacy_output is not None:
+            roots.append(legacy_output)
         db_derived = self._database_sibling_root("output")
         if db_derived is not None:
             roots.append(db_derived)
         return self._dedupe_paths(roots)
+
+    def _legacy_data_output_root(self) -> Path | None:
+        legacy_root = (self.data_dir.expanduser().resolve() / "output").resolve()
+        default_output_root = Path("./news_output").expanduser().resolve()
+        if os.getenv("DATA_DIR") or self.output_root.expanduser().resolve() == default_output_root:
+            return legacy_root
+        return None
 
     def resolve_input_path(self, path_value: str | Path | None) -> Path | None:
         return self._resolve_path(

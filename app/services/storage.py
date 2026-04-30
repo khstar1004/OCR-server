@@ -22,6 +22,19 @@ class OutputStorage:
     def job_artifact_roots(self, job_key: str) -> tuple[Path, ...]:
         return tuple(root / job_key for root in self.settings.output_roots())
 
+    def job_config_path(self, job_key: str) -> Path:
+        return self._primary_output_root() / job_key / "job_config.json"
+
+    def save_job_config(self, job_key: str, payload: dict[str, Any]) -> Path:
+        path = self.job_config_path(job_key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        dump_json(path, payload)
+        return path
+
+    def load_job_config(self, job_key: str) -> dict[str, Any]:
+        payload = self._read_json(self.job_config_path(job_key))
+        return payload if isinstance(payload, dict) else {}
+
     def resolve_article_bundle_path(
         self,
         job_key: str,
@@ -85,6 +98,16 @@ class OutputStorage:
 
     def page_bundle_path(self, job_key: str, pdf_name: str, page_number: int) -> Path:
         return self.parsed_path(job_key, pdf_name) / f"page_{page_number:04d}"
+
+    def resolve_page_bundle_path(self, job_key: str, pdf_name: str, page_number: int) -> Path:
+        candidates = [
+            self._page_bundle_path_for_root(root, job_key, pdf_name, page_number)
+            for root in self.settings.output_roots()
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return candidates[0]
 
     def article_bundle_dir(
         self,
@@ -171,6 +194,7 @@ class OutputStorage:
         correction_source: str | None = None,
         correction_model: str | None = None,
         source_metadata: dict[str, Any] | None = None,
+        ocr_quality: dict[str, Any] | None = None,
     ) -> Path:
         bundle_dir = self.article_bundle_dir(job_key, pdf_name, page_number, article_order, title)
         caption_entries = list(caption_entries or [])
@@ -198,6 +222,7 @@ class OutputStorage:
             "correction_source": correction_source,
             "correction_model": correction_model,
             "source_metadata": source_metadata or None,
+            "ocr_quality": ocr_quality or None,
         }
         dump_json(bundle_dir / "article.json", metadata)
         dump_json(
@@ -242,6 +267,7 @@ class OutputStorage:
         pdf_name: str,
         page_number: int,
         article_entries: list[dict[str, Any]],
+        ocr_quality: dict[str, Any] | None = None,
     ) -> Path:
         page_dir = self.page_bundle_dir(job_key, pdf_name, page_number)
         payload = {
@@ -250,6 +276,7 @@ class OutputStorage:
             "page_number": page_number,
             "article_count": len(article_entries),
             "articles": article_entries,
+            "ocr_quality": ocr_quality or None,
         }
         dump_json(page_dir / "page.json", payload)
         return page_dir / "page.json"

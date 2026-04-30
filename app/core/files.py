@@ -4,6 +4,10 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 
+PDF_FILE_SUFFIXES = {".pdf"}
+IMAGE_FILE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+SUPPORTED_SOURCE_SUFFIXES = PDF_FILE_SUFFIXES | IMAGE_FILE_SUFFIXES
+
 
 @dataclass(frozen=True, slots=True)
 class FileFingerprint:
@@ -24,11 +28,15 @@ def fingerprint_for(path: Path) -> FileFingerprint:
     return FileFingerprint(size=stat.st_size, mtime_ns=stat.st_mtime_ns)
 
 
-def iter_pdf_files(root: Path) -> list[Path]:
+def iter_source_files(root: Path) -> list[Path]:
     if not root.exists():
         return []
     return sorted(
         candidate
         for candidate in root.rglob("*")
-        if candidate.is_file() and candidate.suffix.lower() == ".pdf"
+        if candidate.is_file() and candidate.suffix.lower() in SUPPORTED_SOURCE_SUFFIXES
     )
+
+
+def iter_pdf_files(root: Path) -> list[Path]:
+    return [candidate for candidate in iter_source_files(root) if candidate.suffix.lower() in PDF_FILE_SUFFIXES]

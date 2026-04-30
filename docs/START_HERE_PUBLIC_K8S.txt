@@ -13,12 +13,28 @@ Public URLs:
 - App health: https://nocodeaidev.army.mil:20443/a-cong-ocr/api/v1/health
 - OCR health: https://nocodeaidev.army.mil:20443/a-cong-ocr-api/health
 - OCR image API: https://nocodeaidev.army.mil:20443/a-cong-ocr-api/api/v1/ocr/image
+- OCR playground: https://nocodeaidev.army.mil:20443/a-cong-ocr-playground/
+- OCR admin: https://nocodeaidev.army.mil:20443/a-cong-ocr-playground/admin
 
 Read first:
 - docs/defense_k8s_nocodeaidev_runbook.md
 
 Deploy file:
 - k8s/defense-remote-ocr.nocodeaidev.yaml
+
+Runtime layout:
+- a-cong-ocr-app: web/demo UI, lightweight a-cong-ocr-ui image
+- a-cong-ocr-playground: playground UI/proxy, lightweight a-cong-ocr-ui image
+- a-cong-ocr-service: OCR API, heavy a-cong-ocr image
+- a-cong-vllm-ocr: Chandra vLLM, GPU-only internal service
+- Runtime settings file: /data/runtime/runtime-config/settings.json
+- Account/session file: /data/runtime/runtime-config/auth.json
+
+Change settings without image rebuild:
+- Use the playground admin page, or
+- Login through /a-cong-ocr-playground/api/auth/login and then GET/PUT /a-cong-ocr-playground/api/admin/runtime-settings with the session cookie.
+- Live/new-request keys include OCR timeout, OCR concurrency, Chandra prompt/batch, playground page/upload limits, LLM post-processing URL, watcher polling, and target API URL/timeout.
+- vLLM launch args such as VLLM_MODEL_NAME, VLLM_MAX_NUM_SEQS, VLLM_MAX_MODEL_LEN, VLLM_GPU_MEMORY_UTILIZATION, and VLLM_MM_PROCESSOR_KWARGS still require restarting only a-cong-vllm-ocr. The vLLM entrypoint reads the saved runtime JSON on startup.
 
 Before applying:
 1. Confirm image paths in the YAML match Harbor.
@@ -27,7 +43,7 @@ Before applying:
 4. Confirm the model will exist at /models/chandra-ocr-2/config.json inside the pods.
 5. Do not expose a-cong-vllm-ocr through Ingress.
 
-Apply:
+New or rebuild deployment:
 chmod +x scripts/*.sh
 ./scripts/deploy_public_ocr_closed_network.sh
 
@@ -38,10 +54,27 @@ This command runs preflight checks first:
 - imagePullSecret harbor-reg-cred
 - GPU node nocode-ai-army01
 - free nvidia.com/gpu >= 1
-- no Ingress collision on /a-cong-ocr or /a-cong-ocr-api
+- no Ingress collision on /a-cong-ocr, /a-cong-ocr-api, or /a-cong-ocr-playground
 
 Check:
 scripts/check_k8s_public_ocr.sh
+
+Existing working cluster, UI image replacement only:
+chmod +x scripts/*.sh
+./scripts/replace_public_ocr_ui_image.sh
+
+Use this replacement script when vLLM and OCR API are already healthy and only web/playground UI changed.
+If the loaded UI tar only contains local tag a-cong-ocr-ui:chandra, the script retags it to the Harbor image automatically.
+If OCR API code changed too, run: UPDATE_OCR_API_IMAGE=1 ./scripts/replace_public_ocr_ui_image.sh
+For a first deploy or rebuild from scratch, use deploy_public_ocr_closed_network.sh instead.
+
+Existing working cluster, first split migration without touching vLLM:
+chmod +x scripts/*.sh
+./scripts/migrate_public_ocr_split_ui.sh
+
+Use this once when the old cluster already has healthy a-cong-ocr-service and a-cong-vllm-ocr, but not the new lightweight app/playground split yet.
+It applies only app/playground deployments, their services, ingress rules, and minimal ConfigMap keys.
+It does not restart a-cong-vllm-ocr.
 
 vLLM transformer/qwen rule:
 - If scripts/validate_vllm_image_offline.sh fails on the internet/prep PC, the same image will fail in the closed network.

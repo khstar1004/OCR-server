@@ -14,6 +14,7 @@ from app.schemas.job import JobRunDailyRequest
 from app.services.article_cluster import ArticleClusterer
 from app.services.news_delivery import NewsDeliveryClient
 from app.services.file_scanner import FileScanner
+from app.services.job_options import normalize_job_ocr_options, select_items_by_job_page_options
 from app.services.ocr_engine import OCREngine
 from app.services.pdf_renderer import PdfRenderer
 from app.services.relevance_scorer import NationalAssemblyRelevanceScorer
@@ -36,6 +37,7 @@ class JobRunner:
         self.delivery = NewsDeliveryClient()
 
     def create_job(self, request: JobRunDailyRequest) -> Job:
+        ocr_options = normalize_job_ocr_options(request)
         requested_date = request.date
         date_token = requested_date.strftime("%Y%m%d") if requested_date else datetime.now().strftime("%Y%m%d")
         job_key = f"job_{date_token}_{datetime.now().strftime('%H%M%S')}"
@@ -49,6 +51,7 @@ class JobRunner:
             status="queued",
         )
         self.db.add(job)
+        self.storage.save_job_config(job_key, {"ocr_options": ocr_options})
         return job
 
     def execute(self, job_id: int) -> None:
@@ -95,12 +98,14 @@ class JobRunner:
 
     def _run_job(self, job: Job) -> None:
         source_dir = Path(job.source_dir)
+        job_config = self.storage.load_job_config(job.job_key)
+        ocr_options = normalize_job_ocr_options(job_config.get("ocr_options") if isinstance(job_config, dict) else {})
         if not source_dir.exists():
             raise FileNotFoundError(f"source_dir not found: {source_dir}")
         if not source_dir.is_dir():
             raise NotADirectoryError(f"source_dir is not a directory: {source_dir}")
 
-        self._log_and_commit(job.id, None, None, "scan", "running", f"scanning {source_dir}")
+        self._log_and_commit(job.id, None, None, "scan", "running", f"scanning input files in {source_dir}")
         existing_hashes = {
             value
             for value in self.db.scalars(
@@ -135,7 +140,7 @@ class JobRunner:
                 continue
 
             try:
-                self._process_pdf(job, pdf_row)
+                self._process_pdf(job, pdf_row, ocr_options=ocr_options)
                 if pdf_row.status == "completed":
                     job.success_files += 1
                 else:
@@ -148,11 +153,11 @@ class JobRunner:
                 self._log(job.id, pdf_row.id, None, "pdf", "failed", str(exc))
                 self.db.commit()
 
-    def _process_pdf(self, job: Job, pdf_row: PdfFile) -> None:
+    def _process_pdf(self, job: Job, pdf_row: PdfFile, *, ocr_options: dict[str, Any]) -> None:
         pdf_row.status = "running"
         self.db.commit()
         current_pdf_step = "render"
-        self._log_and_commit(job.id, pdf_row.id, None, "render", "running", "page rendering started")
+        self._log_and_commit(job.id, pdf_row.id, None, "render", "running", "page rendering or image normalization started")
 
         try:
             page_output_dir = self.storage.page_dir(job.job_key, pdf_row.file_name)
@@ -165,8 +170,19 @@ class JobRunner:
             self.db.commit()
             raise
 
+        selected_pages = select_items_by_job_page_options(rendered_pages, ocr_options)
+        if len(selected_pages) != len(rendered_pages):
+            self._log_and_commit(
+                job.id,
+                pdf_row.id,
+                None,
+                "render",
+                "completed",
+                f"selected_pages={len(selected_pages)} source_pages={len(rendered_pages)} page_range={ocr_options.get('page_range') or 'all'}",
+            )
+
         page_failures = 0
-        for rendered_page in rendered_pages:
+        for rendered_page in selected_pages:
             page_row = Page(
                 pdf_file_id=pdf_row.id,
                 page_number=rendered_page.page_number,
@@ -209,6 +225,7 @@ class JobRunner:
                 current_step = "cluster"
                 self._log_and_commit(job.id, pdf_row.id, page_row.id, "cluster", "running", "clustering article candidates")
                 articles, unassigned = self.clusterer.cluster_page(layout)
+                ocr_quality = self._build_page_quality(layout, article_count=len(articles))
                 page_row.unassigned_payload = [dataclass_to_dict(block) for block in unassigned]
                 self._log_and_commit(
                     job.id,
@@ -335,6 +352,7 @@ class JobRunner:
                         correction_source=relevance.correction_source if relevance is not None else None,
                         correction_model=relevance.correction_model if relevance is not None else None,
                         source_metadata=source_metadata,
+                        ocr_quality=ocr_quality,
                     )
                     page_article_entries.append(
                         {
@@ -354,6 +372,7 @@ class JobRunner:
                             "relevance_label": relevance.label if relevance is not None else None,
                             "relevance_model": relevance.model if relevance is not None else None,
                             "relevance_source": relevance.source if relevance is not None else None,
+                            "ocr_quality": ocr_quality,
                         }
                     )
                     job.total_articles += 1
@@ -364,6 +383,7 @@ class JobRunner:
                     pdf_name=pdf_row.file_name,
                     page_number=rendered_page.page_number,
                     article_entries=page_article_entries,
+                    ocr_quality=ocr_quality,
                 )
                 self._log_and_commit(job.id, pdf_row.id, page_row.id, "crop", "completed", f"images={cropped_images}")
                 page_row.parse_status = "parsed"
@@ -382,6 +402,54 @@ class JobRunner:
         pdf_row.processed_at = datetime.now(timezone.utc)
         self._log(job.id, pdf_row.id, None, "persist", pdf_row.status, f"pages={pdf_row.page_count}")
         self.db.commit()
+
+    def _build_page_quality(self, layout: Any, *, article_count: int) -> dict[str, Any]:
+        text_chunks = [
+            str(getattr(block, "text", "") or "").strip()
+            for block in getattr(layout, "blocks", []) or []
+            if str(getattr(block, "text", "") or "").strip()
+        ]
+        text = "\n".join(text_chunks)
+        compact = "".join(ch for ch in text if not ch.isspace())
+        korean_count = sum(1 for ch in text if "\uac00" <= ch <= "\ud7a3")
+        text_count = sum(1 for ch in text if not ch.isspace())
+        korean_ratio = round(korean_count / text_count, 4) if text_count else 0.0
+        blocks = list(getattr(layout, "blocks", []) or [])
+        confidences = [float(getattr(block, "confidence", 0.0) or 0.0) for block in blocks]
+        average_confidence = round(sum(confidences) / len(confidences), 4) if confidences else 0.0
+        image_count = sum(1 for block in blocks if str(getattr(getattr(block, "label", ""), "value", getattr(block, "label", ""))).lower() == "image")
+        char_score = min(len(compact) / max(self.settings.ocr_quality_min_chars, 1), 2.0) / 2.0
+        score = round(max(0.0, min(1.0, (char_score * 0.45) + (korean_ratio * 0.3) + (average_confidence * 0.25))), 4)
+        reasons: list[str] = []
+        if len(compact) == 0:
+            reasons.append("empty_text")
+        elif len(compact) < self.settings.ocr_quality_min_chars:
+            reasons.append("low_text")
+        if text_count and korean_ratio < self.settings.ocr_quality_min_korean_ratio:
+            reasons.append("low_korean_ratio")
+        if average_confidence and average_confidence < 0.75:
+            reasons.append("low_confidence")
+        if article_count == 0:
+            reasons.append("no_articles")
+        if image_count > 0 and len(compact) < 20:
+            reasons.append("image_only")
+        status = "ready"
+        if score < 0.45 or "empty_text" in reasons or "no_articles" in reasons:
+            status = "blocked"
+        elif score < 0.7 or reasons:
+            status = "warning"
+        return {
+            "status": status,
+            "score": score,
+            "char_count": len(compact),
+            "korean_ratio": korean_ratio,
+            "average_confidence": average_confidence,
+            "block_count": len(blocks),
+            "image_count": image_count,
+            "article_count": article_count,
+            "needs_review": status != "ready",
+            "reasons": reasons,
+        }
 
     def _log(self, job_id: int, pdf_file_id: int | None, page_id: int | None, step_name: str, status: str, message: str) -> None:
         self.db.add(

@@ -9,7 +9,11 @@ IMAGE_PULL_SECRET="${IMAGE_PULL_SECRET:-harbor-reg-cred}"
 GPU_NODE="${GPU_NODE:-nocode-ai-army01}"
 APP_PREFIX="${APP_PREFIX:-/a-cong-ocr}"
 OCR_PREFIX="${OCR_PREFIX:-/a-cong-ocr-api}"
+PLAYGROUND_PREFIX="${PLAYGROUND_PREFIX:-/a-cong-ocr-playground}"
 EXPECTED_GPU_REQUEST="${EXPECTED_GPU_REQUEST:-1}"
+EXPECTED_GPUMEM_PERCENTAGE="${EXPECTED_GPUMEM_PERCENTAGE:-30}"
+EXPECTED_GPUCORES="${EXPECTED_GPUCORES:-30}"
+REQUIRE_HAMI_PERCENTAGE_RESOURCES="${REQUIRE_HAMI_PERCENTAGE_RESOURCES:-1}"
 
 log() {
   printf '\n[%s] %s\n' "$(date '+%H:%M:%S')" "$*"
@@ -69,7 +73,10 @@ allocatable_gpu="$(jsonpath get node "${GPU_NODE}" -o jsonpath='{.status.allocat
 allocated_gpu="$(extract_allocated_resource "${GPU_NODE}" "nvidia.com/gpu")"
 capacity_gpumem="$(jsonpath get node "${GPU_NODE}" -o jsonpath='{.status.capacity.nvidia\.com/gpumem}')"
 allocatable_gpumem="$(jsonpath get node "${GPU_NODE}" -o jsonpath='{.status.allocatable.nvidia\.com/gpumem}')"
+capacity_gpumem_percentage="$(jsonpath get node "${GPU_NODE}" -o jsonpath='{.status.capacity.nvidia\.com/gpumem-percentage}')"
+allocatable_gpumem_percentage="$(jsonpath get node "${GPU_NODE}" -o jsonpath='{.status.allocatable.nvidia\.com/gpumem-percentage}')"
 capacity_gpucores="$(jsonpath get node "${GPU_NODE}" -o jsonpath='{.status.capacity.nvidia\.com/gpucores}')"
+allocatable_gpucores="$(jsonpath get node "${GPU_NODE}" -o jsonpath='{.status.allocatable.nvidia\.com/gpucores}')"
 
 capacity_gpu="${capacity_gpu:-0}"
 allocatable_gpu="${allocatable_gpu:-0}"
@@ -79,10 +86,19 @@ echo "nvidia.com/gpu capacity=${capacity_gpu} allocatable=${allocatable_gpu} all
 if [[ -n "${capacity_gpumem}" || -n "${allocatable_gpumem}" ]]; then
   echo "nvidia.com/gpumem capacity=${capacity_gpumem:-unknown} allocatable=${allocatable_gpumem:-unknown}"
 else
-  warn "nvidia.com/gpumem is not exposed on this node. Keeping manifest on nvidia.com/gpu only."
+  warn "nvidia.com/gpumem is not exposed on this node. This is OK when this HAMi cluster uses gpumem-percentage."
 fi
-if [[ -n "${capacity_gpucores}" ]]; then
-  echo "nvidia.com/gpucores capacity=${capacity_gpucores}"
+if [[ -n "${capacity_gpumem_percentage}" || -n "${allocatable_gpumem_percentage}" ]]; then
+  echo "nvidia.com/gpumem-percentage capacity=${capacity_gpumem_percentage:-unknown} allocatable=${allocatable_gpumem_percentage:-unknown} required=${EXPECTED_GPUMEM_PERCENTAGE}"
+elif [[ "${REQUIRE_HAMI_PERCENTAGE_RESOURCES}" == "1" ]]; then
+  fail "nvidia.com/gpumem-percentage is not exposed on ${GPU_NODE}, but the manifest requests it. Match the manifest to the working HAMi resource names before deploy."
+else
+  warn "nvidia.com/gpumem-percentage is not exposed on this node."
+fi
+if [[ -n "${capacity_gpucores}" || -n "${allocatable_gpucores}" ]]; then
+  echo "nvidia.com/gpucores capacity=${capacity_gpucores:-unknown} allocatable=${allocatable_gpucores:-unknown} required=${EXPECTED_GPUCORES}"
+elif [[ "${REQUIRE_HAMI_PERCENTAGE_RESOURCES}" == "1" ]]; then
+  fail "nvidia.com/gpucores is not exposed on ${GPU_NODE}, but the manifest requests it. Match the manifest to the working HAMi resource names before deploy."
 fi
 
 if ! [[ "${allocatable_gpu}" =~ ^[0-9]+$ && "${allocated_gpu}" =~ ^[0-9]+$ && "${EXPECTED_GPU_REQUEST}" =~ ^[0-9]+$ ]]; then
@@ -112,15 +128,15 @@ collision=0
 while IFS=$'\t' read -r ns name host paths; do
   [[ -z "${ns:-}" ]] && continue
   [[ "${host}" == "${HOST}" ]] || continue
-  if [[ "${paths}" == *"${APP_PREFIX}"* || "${paths}" == *"${OCR_PREFIX}"* ]]; then
-    if [[ "${ns}/${name}" != "${NAMESPACE}/a-cong-ocr-app" && "${ns}/${name}" != "${NAMESPACE}/a-cong-ocr-api" ]]; then
+  if [[ "${paths}" == *"${APP_PREFIX}"* || "${paths}" == *"${OCR_PREFIX}"* || "${paths}" == *"${PLAYGROUND_PREFIX}"* ]]; then
+    if [[ "${ns}/${name}" != "${NAMESPACE}/a-cong-ocr-app" && "${ns}/${name}" != "${NAMESPACE}/a-cong-ocr-api" && "${ns}/${name}" != "${NAMESPACE}/a-cong-ocr-playground" ]]; then
       warn "Ingress path may collide: ${ns}/${name} host=${host} paths=${paths}"
       collision=1
     fi
   fi
 done <<< "${ingress_paths}"
 if (( collision != 0 )); then
-  fail "Existing Ingress uses ${APP_PREFIX} or ${OCR_PREFIX}. Pick different prefixes before deploy."
+  fail "Existing Ingress uses ${APP_PREFIX}, ${OCR_PREFIX}, or ${PLAYGROUND_PREFIX}. Pick different prefixes before deploy."
 fi
 
 log "Checking local-path PVC status if already present"

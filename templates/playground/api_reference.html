@@ -1,0 +1,620 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>army-ocr API Reference</title>
+  <base href="__PLAYGROUND_BASE__">
+  <link rel="stylesheet" href="assets/playground.css">
+</head>
+<body class="docs-body">
+  <div class="docs-shell">
+    <aside class="docs-sidebar">
+      <div class="docs-brand"><span class="brand-mark">a</span><span>army-ocr</span></div>
+      <div class="docs-search">Search OCR API...</div>
+      <nav class="docs-side-nav" aria-label="API reference">
+        <p>Core OCR</p>
+        <a class="active" href="api-reference#health"><span class="method get">GET</span> Health</a>
+        <a href="api-reference#capabilities"><span class="method get">GET</span> Capabilities</a>
+        <a href="api-reference#runtime-settings"><span class="method get">GET</span> Runtime Settings</a>
+        <a href="api-reference#runtime-settings"><span class="method put">PUT</span> Runtime Settings</a>
+        <a href="api-reference#auth"><span class="method post">POST</span> Login</a>
+        <a href="api-reference#auth"><span class="method post">POST</span> Signup</a>
+        <a href="api-reference#ocr-image"><span class="method post">POST</span> OCR Image</a>
+        <a href="api-reference#ocr-pdf"><span class="method post">POST</span> OCR PDF</a>
+        <a href="api-reference#ocr-async"><span class="method post">POST</span> OCR Request</a>
+        <a href="api-reference#marker"><span class="method post">POST</span> Marker Convert</a>
+        <a href="api-reference#thumbnails"><span class="method get">GET</span> Thumbnails</a>
+        <a href="api-reference#requests"><span class="method del">DEL</span> Cleanup Requests</a>
+        <p>Workflows</p>
+        <a href="api-reference#workflows"><span class="method get">GET</span> List Step Types</a>
+        <a href="api-reference#workflows"><span class="method get">GET</span> List Workflows</a>
+        <a href="api-reference#workflows"><span class="method post">POST</span> Create Workflow</a>
+        <a href="api-reference#workflows"><span class="method get">GET</span> Get Workflow</a>
+        <a href="api-reference#workflows"><span class="method del">DEL</span> Delete Workflow</a>
+        <a href="api-reference#workflows"><span class="method post">POST</span> Execute Workflow</a>
+        <a href="api-reference#workflows"><span class="method get">GET</span> Get Execution Status</a>
+        <p>Documents</p>
+        <a href="api-reference#documents"><span class="method post">POST</span> Create Document</a>
+        <a href="api-reference#documents"><span class="method get">GET</span> Create Result Check</a>
+        <a href="api-reference#documents"><span class="method get">GET</span> Get Document</a>
+        <a href="api-reference#documents"><span class="method post">POST</span> Convert Document</a>
+        <a href="api-reference#documents"><span class="method get">GET</span> Convert Result Check</a>
+        <a href="api-reference#documents"><span class="method post">POST</span> Segment Document</a>
+        <a href="api-reference#documents"><span class="method get">GET</span> Segment Result Check</a>
+        <p>Extraction</p>
+        <a href="api-reference#extraction"><span class="method post">POST</span> Generate Schemas</a>
+        <a href="api-reference#extraction"><span class="method get">GET</span> Schema Result Check</a>
+        <a href="api-reference#extraction"><span class="method post">POST</span> Extract Structured Data</a>
+        <a href="api-reference#extraction"><span class="method get">GET</span> Extract Result Check</a>
+        <a href="api-reference#extraction"><span class="method post">POST</span> Score Extraction</a>
+        <a href="api-reference#extraction"><span class="method get">GET</span> Score Result Check</a>
+        <p>Forms</p>
+        <a href="api-reference#forms"><span class="method post">POST</span> Form Filling</a>
+        <a href="api-reference#forms"><span class="method get">GET</span> Form Result Check</a>
+        <a href="api-reference#forms"><span class="method post">POST</span> Track Changes</a>
+        <a href="api-reference#forms"><span class="method get">GET</span> Track Result Check</a>
+        <p>Files</p>
+        <a href="api-reference#files"><span class="method post">POST</span> Create File</a>
+        <a href="api-reference#files"><span class="method post">POST</span> Request Upload URL</a>
+        <a href="api-reference#files"><span class="method put">PUT</span> Upload Payload</a>
+        <a href="api-reference#files"><span class="method get">GET</span> Confirm Upload</a>
+        <a href="api-reference#files"><span class="method get">GET</span> List Files</a>
+        <a href="api-reference#files"><span class="method get">GET</span> File Metadata</a>
+        <a href="api-reference#files"><span class="method get">GET</span> Download File</a>
+        <a href="api-reference#files"><span class="method del">DEL</span> Delete File</a>
+        <p>Templates</p>
+        <a href="api-reference#templates"><span class="method get">GET</span> List Templates</a>
+        <a href="api-reference#templates"><span class="method post">POST</span> Promote To Template</a>
+        <a href="api-reference#templates"><span class="method get">GET</span> Get Template</a>
+        <a href="api-reference#templates"><span class="method put">PUT</span> Update Template</a>
+        <a href="api-reference#templates"><span class="method del">DEL</span> Remove Template</a>
+        <a href="api-reference#templates"><span class="method post">POST</span> Clone Template</a>
+        <a href="api-reference#templates"><span class="method post">POST</span> Add Examples</a>
+        <a href="api-reference#templates"><span class="method get">GET</span> Example Thumbnail</a>
+        <p>Collections</p>
+        <a href="api-reference#collections"><span class="method get">GET</span> List Collections</a>
+        <a href="api-reference#collections"><span class="method post">POST</span> Create Collection</a>
+        <a href="api-reference#collections"><span class="method get">GET</span> Get Collection</a>
+        <a href="api-reference#collections"><span class="method put">PUT</span> Update Collection</a>
+        <a href="api-reference#collections"><span class="method del">DEL</span> Delete Collection</a>
+        <a href="api-reference#collections"><span class="method post">POST</span> Add Files</a>
+        <a href="api-reference#collections"><span class="method del">DEL</span> Remove File</a>
+        <p>Batch Runs</p>
+        <a href="api-reference#batch-runs"><span class="method get">GET</span> List Batch Runs</a>
+        <a href="api-reference#batch-runs"><span class="method post">POST</span> Start Batch Run</a>
+        <a href="api-reference#batch-runs"><span class="method get">GET</span> Get Batch Run</a>
+        <a href="api-reference#batch-runs"><span class="method get">GET</span> Batch Results</a>
+        <p>Eval Rubrics</p>
+        <a href="api-reference#eval-rubrics"><span class="method get">GET</span> List Eval Rubrics</a>
+        <a href="api-reference#eval-rubrics"><span class="method post">POST</span> Create Eval Rubric</a>
+        <a href="api-reference#eval-rubrics"><span class="method get">GET</span> Get Eval Rubric</a>
+        <a href="api-reference#eval-rubrics"><span class="method put">PUT</span> Update Eval Rubric</a>
+        <a href="api-reference#eval-rubrics"><span class="method del">DEL</span> Delete Eval Rubric</a>
+        <p>Custom Pipelines</p>
+        <a href="api-reference#custom-pipelines"><span class="method get">GET</span> Check Pipeline Access</a>
+        <a href="api-reference#custom-pipelines"><span class="method get">GET</span> List Custom Pipelines</a>
+        <p>Demo Client</p>
+        <a href="api-reference#demo-ui"><span class="method post">POST</span> Demo Convert</a>
+      </nav>
+      <div class="docs-sidebar-footer">
+        <a href="__DOCS_URL__">Guides</a>
+        <a href="__PLAYGROUND_URL__">Try OCR</a>
+      </div>
+    </aside>
+
+    <section class="docs-main">
+      <header class="docs-topnav">
+        <a href="__DOCS_URL__">Guides</a>
+        <a href="__API_GUIDE_URL__">API Guide</a>
+        <a class="active" href="__API_REFERENCE_URL__">API Reference</a>
+        <a href="__OPENAPI_URL__" target="_blank" rel="noopener">OpenAPI</a>
+        <a href="__PLAYGROUND_URL__">Try OCR</a>
+      </header>
+
+      <main class="docs-content api-docs-content">
+        <article class="docs-article">
+          <p class="docs-eyebrow">API Reference</p>
+          <h1>army-ocr API Reference</h1>
+          <p class="docs-lead">
+            이 문서는 army-ocr을 외부 시스템에서 호출하기 위한 범용 OCR API 계약을 정리합니다.
+            고객 연동은 <code>/api/v1/*</code>가 기준이며, 체험 UI 경로는 데모와 QA 용도입니다.
+          </p>
+          <div class="docs-callout">
+            <strong>구현 기준</strong>
+            <span>이 페이지는 현재 서비스의 <code>/openapi.json</code>에 등록된 endpoint만 설명합니다. Datalab에 있지만 이 OCR 서비스에 없는 endpoint는 Reference에 넣지 않습니다.</span>
+          </div>
+
+          <h2 id="base">기본 정보</h2>
+          <table>
+            <thead><tr><th>항목</th><th>값</th></tr></thead>
+            <tbody>
+              <tr><td>Preview Base</td><td><code>http://14.50.225.33:18110</code></td></tr>
+              <tr><td>API Prefix</td><td><code>/api/v1</code></td></tr>
+              <tr><td>OpenAPI</td><td><code>/openapi.json</code></td></tr>
+              <tr><td>인증</td><td>현재 preview는 별도 API key 없음. 운영 공개 시 reverse proxy 또는 gateway 인증 권장</td></tr>
+              <tr><td>지원 입력</td><td>PDF, PNG, JPG, JPEG, WEBP</td></tr>
+              <tr><td>좌표계</td><td><code>bbox=[x1,y1,x2,y2]</code>, 페이지 이미지 픽셀 기준</td></tr>
+              <tr><td>비동기 공통 상태</td><td><code>processing</code>, <code>complete</code>, <code>failed</code></td></tr>
+            </tbody>
+          </table>
+
+          <section class="endpoint" id="health">
+            <p class="docs-eyebrow">Health</p>
+            <h2>서비스 상태 확인</h2>
+            <div class="endpoint-bar"><span class="method get">GET</span><code>/health</code></div>
+            <p>OCR 서비스가 살아 있는지 확인합니다. Datalab 호환 health는 <code>/api/health</code>, <code>/api/v1/health</code>도 제공합니다.</p>
+            <h3>Response</h3>
+            <pre><code>{
+  "status": "ok",
+  "service": "army-ocr Service",
+  "compat_mode": "datalab-like-v1"
+}</code></pre>
+            <table>
+              <thead><tr><th>Method</th><th>Path</th><th>용도</th></tr></thead>
+              <tbody>
+                <tr><td><code>GET</code></td><td><code>/health</code></td><td>외부 gateway/호환 health</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/health</code></td><td>Datalab 스타일 alias</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/health</code></td><td>API prefix 내부 health</td></tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="endpoint" id="capabilities">
+            <p class="docs-eyebrow">Capabilities</p>
+            <h2>지원 기능 조회</h2>
+            <div class="endpoint-bar"><span class="method get">GET</span><code>/api/v1/capabilities</code></div>
+            <p>입력 형식, 출력 형식, marker mode, 동시 처리 제한, 지원 endpoint를 확인합니다.</p>
+            <h3>주요 응답 필드</h3>
+            <table>
+              <thead><tr><th>필드</th><th>설명</th></tr></thead>
+              <tbody>
+                <tr><td><code>input_formats</code></td><td>지원 입력 확장자</td></tr>
+                <tr><td><code>endpoints</code></td><td>주요 API 경로</td></tr>
+                <tr><td><code>features.max_concurrent_ocr_requests</code></td><td>동시 OCR 추론 gate 값</td></tr>
+                <tr><td><code>features.marker_output_formats</code></td><td><code>json</code>, <code>markdown</code>, <code>html</code>, <code>chunks</code></td></tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="endpoint" id="auth">
+            <p class="docs-eyebrow">Account</p>
+            <h2>계정 신청/승인</h2>
+            <div class="endpoint-bar"><span class="method post">POST</span><code>/playground/api/auth/signup</code></div>
+            <div class="endpoint-bar"><span class="method post">POST</span><code>/playground/api/auth/login</code></div>
+            <div class="endpoint-bar"><span class="method get">GET</span><code>/playground/api/admin/users</code></div>
+            <p>일반 사용자는 계정 신청만 할 수 있고, 관리자 승인 후 로그인할 수 있습니다. 운영 설정과 계정 승인은 관리자 세션이 필요합니다.</p>
+          </section>
+
+          <section class="endpoint" id="runtime-settings">
+            <p class="docs-eyebrow">Runtime Settings</p>
+            <h2>운영 설정 조회/저장</h2>
+            <div class="endpoint-bar"><span class="method get">GET</span><code>/playground/api/admin/runtime-settings</code></div>
+            <div class="endpoint-bar"><span class="method put">PUT</span><code>/playground/api/admin/runtime-settings</code></div>
+            <p>관리자 세션이 필요합니다. 이미지를 다시 만들지 않고 OCR upstream, timeout, 동시성, Chandra prompt/batch, playground 제한, 국회 API/LLM/감시 주기 같은 운영값을 저장합니다. <code>restart_required</code>인 vLLM 실행 인자는 저장 후 vLLM만 재시작하면 반영됩니다.</p>
+            <pre><code>curl -c cookies.txt -X POST http://127.0.0.1:18110/playground/api/auth/login \
+  -H "content-type: application/json" \
+  -d "{\"username\":\"admin\",\"password\":\"&lt;admin-password&gt;\"}"
+
+curl -b cookies.txt -X PUT http://127.0.0.1:18110/playground/api/admin/runtime-settings \
+  -H "content-type: application/json" \
+  -d "{\"values\":{\"ocr_service_timeout_sec\":300,\"target_api_timeout_sec\":60}}"</code></pre>
+            <table>
+              <thead><tr><th>Field</th><th>설명</th></tr></thead>
+              <tbody>
+                <tr><td><code>path</code></td><td>설정 파일 경로. Docker/k8s 기본값은 <code>/data/runtime/runtime-config/settings.json</code></td></tr>
+                <tr><td><code>specs[]</code></td><td>설정 키, 타입, 최소/최대값, 재시작 필요 여부</td></tr>
+                <tr><td><code>values</code></td><td>현재 effective value</td></tr>
+                <tr><td><code>overrides</code></td><td>UI/API로 저장한 override 값</td></tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="endpoint" id="ocr-image">
+            <p class="docs-eyebrow">Synchronous OCR</p>
+            <h2>이미지 1장 OCR</h2>
+            <div class="endpoint-bar"><span class="method post">POST</span><code>/api/v1/ocr/image</code></div>
+            <p>이미지 파일 하나를 즉시 OCR하고 페이지 텍스트, Markdown, 블록, bbox를 반환합니다.</p>
+            <table>
+              <thead><tr><th>Form field</th><th>기본값</th><th>설명</th></tr></thead>
+              <tbody>
+                <tr><td><code>file</code></td><td>필수</td><td>이미지 파일</td></tr>
+                <tr><td><code>page_number</code></td><td><code>1</code></td><td>응답에 표시할 페이지 번호</td></tr>
+                <tr><td><code>width</code>, <code>height</code></td><td>자동</td><td>이미지 크기 override</td></tr>
+                <tr><td><code>include_raw</code></td><td><code>true</code></td><td>raw OCR payload 포함 여부</td></tr>
+              </tbody>
+            </table>
+            <pre><code>curl -X POST http://127.0.0.1:18110/api/v1/ocr/image \
+  -F "file=@page.png" \
+  -F "page_number=1" \
+  -F "include_raw=false"</code></pre>
+          </section>
+
+          <section class="endpoint" id="ocr-pdf">
+            <p class="docs-eyebrow">Synchronous OCR</p>
+            <h2>PDF OCR</h2>
+            <div class="endpoint-bar"><span class="method post">POST</span><code>/api/v1/ocr/pdf</code></div>
+            <p>PDF를 페이지 이미지로 렌더링한 뒤 Chandra OCR을 실행합니다.</p>
+            <table>
+              <thead><tr><th>Form field</th><th>기본값</th><th>설명</th></tr></thead>
+              <tbody>
+                <tr><td><code>file</code></td><td>필수</td><td>PDF 파일</td></tr>
+                <tr><td><code>dpi</code></td><td><code>300</code></td><td>PDF 렌더링 해상도</td></tr>
+                <tr><td><code>max_pages</code></td><td>전체</td><td>처리할 최대 페이지 수</td></tr>
+                <tr><td><code>page_range</code></td><td>전체</td><td>zero-based 범위. 예: <code>0</code>, <code>0-2</code>, <code>0,2</code></td></tr>
+                <tr><td><code>include_raw</code></td><td><code>true</code></td><td>raw OCR payload 포함 여부</td></tr>
+              </tbody>
+            </table>
+            <pre><code>curl -X POST http://127.0.0.1:18110/api/v1/ocr/pdf \
+  -F "file=@sample.pdf" \
+  -F "page_range=0-2" \
+  -F "include_raw=false"</code></pre>
+          </section>
+
+          <section class="endpoint" id="ocr-async">
+            <p class="docs-eyebrow">Async OCR</p>
+            <h2>비동기 OCR 요청</h2>
+            <div class="endpoint-bar"><span class="method post">POST</span><code>/api/v1/ocr</code></div>
+            <p>요청 ID를 먼저 받고, <code>GET /api/v1/ocr/{request_id}</code>로 결과를 조회합니다.</p>
+            <pre><code>curl -X POST http://127.0.0.1:18110/api/v1/ocr \
+  -F "file=@sample.pdf" \
+  -F "page_range=0-1"</code></pre>
+            <div class="endpoint-bar"><span class="method get">GET</span><code>/api/v1/ocr/{request_id}</code></div>
+            <h3>Submission response</h3>
+            <pre><code>{
+  "request_id": "req_...",
+  "request_check_url": "http://.../api/v1/ocr/{request_id}",
+  "status": "processing"
+}</code></pre>
+          </section>
+
+          <section class="endpoint" id="marker">
+            <p class="docs-eyebrow" id="convert">Document Conversion</p>
+            <h2>문서 변환 Marker API</h2>
+            <div class="endpoint-bar"><span class="method post">POST</span><code>/api/v1/marker</code></div>
+            <p>OCR 결과를 구조화 문서로 변환합니다. JSON, Markdown, HTML, chunks를 한 번에 요청할 수 있습니다.</p>
+            <table>
+              <thead><tr><th>Form field</th><th>기본값</th><th>설명</th></tr></thead>
+              <tbody>
+                <tr><td><code>file</code> 또는 <code>file.0</code></td><td>업로드 또는 URL 중 하나 필수</td><td>처리할 파일</td></tr>
+                <tr><td><code>file_url</code></td><td>-</td><td>로컬 경로, <code>file://</code>, HTTP(S) URL</td></tr>
+                <tr><td><code>output_format</code></td><td><code>markdown</code></td><td><code>json,markdown,html,chunks</code> 복수 지정 가능</td></tr>
+                <tr><td><code>mode</code></td><td><code>balanced</code></td><td><code>fast</code>, <code>balanced</code>, <code>accurate</code></td></tr>
+                <tr><td><code>page_range</code></td><td>전체</td><td>zero-based 페이지 범위</td></tr>
+                <tr><td><code>paginate</code></td><td><code>false</code></td><td>페이지 구분 유지</td></tr>
+                <tr><td><code>add_block_ids</code></td><td><code>false</code></td><td>HTML/블록에 ID 부여</td></tr>
+                <tr><td><code>include_markdown_in_chunks</code></td><td><code>false</code></td><td>chunk에 Markdown 포함</td></tr>
+              </tbody>
+            </table>
+            <div class="endpoint-bar"><span class="method get">GET</span><code>/api/v1/marker/{request_id}</code></div>
+            <h3>결과 조회 응답 주요 필드</h3>
+            <table>
+              <thead><tr><th>Field</th><th>설명</th></tr></thead>
+              <tbody>
+                <tr><td><code>status</code></td><td><code>processing</code>, <code>complete</code>, <code>failed</code></td></tr>
+                <tr><td><code>json.pages[].blocks[]</code></td><td>label, bbox, text, confidence를 포함한 OCR block</td></tr>
+                <tr><td><code>markdown</code></td><td>본문과 이미지 참조가 포함된 Markdown</td></tr>
+                <tr><td><code>html</code></td><td>브라우저 렌더링용 HTML</td></tr>
+                <tr><td><code>chunks</code></td><td>검색/임베딩용 chunk 목록</td></tr>
+                <tr><td><code>runtime</code></td><td>request kind, 처리 시간, page count metadata</td></tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="endpoint" id="thumbnails">
+            <p class="docs-eyebrow">Images</p>
+            <h2>썸네일 조회</h2>
+            <div class="endpoint-bar"><span class="method get">GET</span><code>/api/v1/thumbnails/{lookup_key}</code></div>
+            <p>OCR/Marker 결과의 렌더링 페이지 이미지를 base64 썸네일로 반환합니다.</p>
+          </section>
+
+          <section class="endpoint" id="requests">
+            <p class="docs-eyebrow">Request Retention</p>
+            <h2>요청 결과 정리</h2>
+            <div class="endpoint-bar"><span class="method del">DEL</span><code>/api/v1/requests</code></div>
+            <p>오래된 비동기 요청 결과를 조회 또는 삭제합니다. 기본값은 dry-run이라 실제 삭제 전 후보만 확인할 수 있습니다.</p>
+            <table>
+              <thead><tr><th>Query</th><th>기본값</th><th>설명</th></tr></thead>
+              <tbody>
+                <tr><td><code>older_than_hours</code></td><td><code>24</code></td><td>이 시간보다 오래된 요청 후보</td></tr>
+                <tr><td><code>status_filter</code></td><td>-</td><td><code>complete</code>, <code>failed</code> 등 상태 필터</td></tr>
+                <tr><td><code>dry_run</code></td><td><code>true</code></td><td><code>false</code>일 때 실제 삭제</td></tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="endpoint" id="files">
+            <p class="docs-eyebrow">Files</p>
+            <h2>파일 저장소 API</h2>
+            <p>파일을 업로드하고 OCR/문서 변환에서 재사용할 수 있게 로컬 저장소에 등록합니다.</p>
+            <table>
+              <thead><tr><th>Method</th><th>Path</th><th>설명</th></tr></thead>
+              <tbody>
+                <tr><td><code>POST</code></td><td><code>/api/v1/files</code></td><td>multipart 파일 업로드</td></tr>
+                <tr><td><code>POST</code></td><td><code>/api/v1/files/request_upload_url</code></td><td>업로드 slot 발급</td></tr>
+                <tr><td><code>PUT</code></td><td><code>/api/v1/files/uploads/{upload_id}</code></td><td>slot에 파일 payload 업로드</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/files/uploads/{upload_id}/confirm</code></td><td>업로드 확정</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/files</code></td><td>파일 목록</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/files/{file_id}</code></td><td>파일 record</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/files/{file_id}/metadata</code></td><td>파일 metadata</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/files/{file_id}/download_url</code></td><td>다운로드 URL 조회</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/files/{file_id}/download</code></td><td>파일 다운로드</td></tr>
+                <tr><td><code>DELETE</code></td><td><code>/api/v1/files/{file_id}</code></td><td>파일 삭제</td></tr>
+              </tbody>
+            </table>
+            <h3>직접 업로드</h3>
+            <pre><code>curl -X POST http://127.0.0.1:18110/api/v1/files \
+  -F "file=@sample.pdf"</code></pre>
+            <h3>Upload slot 방식</h3>
+            <pre><code>curl -X POST http://127.0.0.1:18110/api/v1/files/request_upload_url \
+  -H "content-type: application/json" \
+  -d "{\"file_name\":\"sample.pdf\",\"content_type\":\"application/pdf\"}"
+
+curl -X PUT http://127.0.0.1:18110/api/v1/files/uploads/{upload_id} \
+  --data-binary "@sample.pdf"
+
+curl http://127.0.0.1:18110/api/v1/files/uploads/{upload_id}/confirm</code></pre>
+          </section>
+
+          <section class="endpoint" id="workflows">
+            <p class="docs-eyebrow">Workflows</p>
+            <h2>워크플로우 API</h2>
+            <p>현재 step은 <code>ocr</code>와 <code>marker_parse</code> 중심입니다.</p>
+            <table>
+              <thead><tr><th>Method</th><th>Path</th><th>설명</th></tr></thead>
+              <tbody>
+                <tr><td><code>GET</code></td><td><code>/api/v1/workflows/step_types</code></td><td>사용 가능한 step 목록</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/workflows/workflows</code></td><td>workflow 목록</td></tr>
+                <tr><td><code>POST</code></td><td><code>/api/v1/workflows/workflows</code></td><td>workflow 생성</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/workflows/workflows/{workflow_id}</code></td><td>workflow 조회</td></tr>
+                <tr><td><code>DELETE</code></td><td><code>/api/v1/workflows/workflows/{workflow_id}</code></td><td>workflow 삭제</td></tr>
+                <tr><td><code>POST</code></td><td><code>/api/v1/workflows/workflows/{workflow_id}/execute</code></td><td>workflow 실행</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/workflows/executions/{execution_id}</code></td><td>실행 상태 조회</td></tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="endpoint" id="documents">
+            <p class="docs-eyebrow">Documents</p>
+            <h2>문서 생성/변환/분할 API</h2>
+            <p>파일 저장소에 등록된 PDF/이미지를 문서 record로 만들고, OCR 결과를 변환하거나 기사/섹션 단위로 분할합니다.</p>
+            <table>
+              <thead><tr><th>Method</th><th>Path</th><th>설명</th></tr></thead>
+              <tbody>
+                <tr><td><code>POST</code></td><td><code>/api/v1/create_document</code></td><td><code>file_id</code> 또는 입력 설정으로 문서 생성 요청</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/create_document/{request_id}</code></td><td>문서 생성 결과 조회</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/documents/{document_id}</code></td><td>문서 record 조회</td></tr>
+                <tr><td><code>POST</code></td><td><code>/api/v1/convert_document</code></td><td>문서를 JSON/Markdown/HTML/chunks로 변환</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/convert_document/{request_id}</code></td><td>변환 결과 조회</td></tr>
+                <tr><td><code>POST</code></td><td><code>/api/v1/segment_document</code></td><td>문서 구조를 기사/섹션 단위로 분할</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/segment_document/{request_id}</code></td><td>분할 결과 조회</td></tr>
+              </tbody>
+            </table>
+            <h3>파일에서 문서 변환까지</h3>
+            <pre><code>curl -X POST http://127.0.0.1:18110/api/v1/create_document \
+  -H "content-type: application/json" \
+  -d "{\"file_id\":\"file_...\"}"
+
+curl -X POST http://127.0.0.1:18110/api/v1/convert_document \
+  -H "content-type: application/json" \
+  -d "{\"document_id\":\"doc_...\",\"output_format\":\"json,markdown\"}"
+
+curl http://127.0.0.1:18110/api/v1/convert_document/{request_id}</code></pre>
+          </section>
+
+          <section class="endpoint" id="extraction">
+            <p class="docs-eyebrow">Extraction</p>
+            <h2>구조화 추출/평가 API</h2>
+            <p>Chandra OCR 결과를 기반으로 schema를 만들고, OCR 텍스트에서 필드 값을 rule-first 방식으로 추출합니다.</p>
+            <table>
+              <thead><tr><th>Method</th><th>Path</th><th>설명</th></tr></thead>
+              <tbody>
+                <tr><td><code>POST</code></td><td><code>/api/v1/generate_extraction_schemas</code></td><td>필드명 기반 추출 schema 생성</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/generate_extraction_schemas/{request_id}</code></td><td>schema 생성 결과 조회</td></tr>
+                <tr><td><code>POST</code></td><td><code>/api/v1/extract_structured_data</code></td><td>문서에서 구조화 필드 추출</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/extract_structured_data/{request_id}</code></td><td>추출 결과 조회</td></tr>
+                <tr><td><code>POST</code></td><td><code>/api/v1/score_extraction_results</code></td><td>예측값과 정답값 비교 평가</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/score_extraction_results/{request_id}</code></td><td>평가 결과 조회</td></tr>
+              </tbody>
+            </table>
+            <h3>Schema 생성 및 추출</h3>
+            <pre><code>curl -X POST http://127.0.0.1:18110/api/v1/generate_extraction_schemas \
+  -H "content-type: application/json" \
+  -d "{\"field_names\":[\"title\",\"summary\",\"document_date\"]}"
+
+curl -X POST http://127.0.0.1:18110/api/v1/extract_structured_data \
+  -H "content-type: application/json" \
+  -d "{\"document_id\":\"doc_...\",\"schema\":{\"name\":\"report\",\"fields\":[{\"name\":\"title\"}]}}"</code></pre>
+          </section>
+
+          <section class="endpoint" id="forms">
+            <p class="docs-eyebrow">Forms and Changes</p>
+            <h2>폼 채우기/변경 추적 API</h2>
+            <p>현재 구현은 OCR 결과와 JSON/text 값을 이용하는 보조 기능입니다. Word DOCX redline 원문 파싱 같은 전용 모델 기능은 아닙니다.</p>
+            <table>
+              <thead><tr><th>Method</th><th>Path</th><th>설명</th></tr></thead>
+              <tbody>
+                <tr><td><code>POST</code></td><td><code>/api/v1/form_filling</code></td><td>템플릿과 값으로 텍스트/JSON 폼 채우기</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/form_filling/{request_id}</code></td><td>폼 채우기 결과 조회</td></tr>
+                <tr><td><code>POST</code></td><td><code>/api/v1/track_changes</code></td><td>before/after JSON 또는 텍스트 diff</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/track_changes/{request_id}</code></td><td>변경 추적 결과 조회</td></tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="endpoint" id="templates">
+            <p class="docs-eyebrow">Processor Templates</p>
+            <h2>템플릿 API</h2>
+            <p>OCR/추출 설정, 예시 파일, 폼 템플릿을 로컬 JSON 저장소에 보관합니다.</p>
+            <table>
+              <thead><tr><th>Method</th><th>Path</th><th>설명</th></tr></thead>
+              <tbody>
+                <tr><td><code>GET</code></td><td><code>/api/v1/templates</code></td><td>템플릿 목록</td></tr>
+                <tr><td><code>POST</code></td><td><code>/api/v1/templates/promote</code></td><td>결과 또는 content를 템플릿으로 등록</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/templates/{template_id}</code></td><td>템플릿 조회</td></tr>
+                <tr><td><code>PUT</code></td><td><code>/api/v1/templates/{template_id}</code></td><td>템플릿 수정</td></tr>
+                <tr><td><code>DELETE</code></td><td><code>/api/v1/templates/{template_id}</code></td><td>템플릿 삭제</td></tr>
+                <tr><td><code>POST</code></td><td><code>/api/v1/templates/{template_id}/clone</code></td><td>템플릿 복제</td></tr>
+                <tr><td><code>POST</code></td><td><code>/api/v1/templates/{template_id}/examples</code></td><td>예시 추가</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/templates/{template_id}/examples/{example_id}/download</code></td><td>예시 다운로드 정보</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/templates/{template_id}/examples/{example_id}/thumbnail</code></td><td>예시 썸네일</td></tr>
+                <tr><td><code>DELETE</code></td><td><code>/api/v1/templates/{template_id}/examples/{example_id}</code></td><td>예시 삭제</td></tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="endpoint" id="collections">
+            <p class="docs-eyebrow">Collections</p>
+            <h2>컬렉션 API</h2>
+            <p>여러 파일을 묶어서 batch run 입력으로 사용합니다.</p>
+            <table>
+              <thead><tr><th>Method</th><th>Path</th><th>설명</th></tr></thead>
+              <tbody>
+                <tr><td><code>GET</code></td><td><code>/api/v1/collections</code></td><td>컬렉션 목록</td></tr>
+                <tr><td><code>POST</code></td><td><code>/api/v1/collections</code></td><td>컬렉션 생성</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/collections/{collection_id}</code></td><td>컬렉션 조회</td></tr>
+                <tr><td><code>PUT</code></td><td><code>/api/v1/collections/{collection_id}</code></td><td>컬렉션 수정</td></tr>
+                <tr><td><code>DELETE</code></td><td><code>/api/v1/collections/{collection_id}</code></td><td>컬렉션 삭제</td></tr>
+                <tr><td><code>POST</code></td><td><code>/api/v1/collections/{collection_id}/files</code></td><td>파일 추가</td></tr>
+                <tr><td><code>DELETE</code></td><td><code>/api/v1/collections/{collection_id}/files/{file_id}</code></td><td>파일 제거</td></tr>
+              </tbody>
+            </table>
+            <pre><code>curl -X POST http://127.0.0.1:18110/api/v1/collections \
+  -H "content-type: application/json" \
+  -d "{\"name\":\"sample-set\",\"file_ids\":[\"file_...\"]}"</code></pre>
+          </section>
+
+          <section class="endpoint" id="batch-runs">
+            <p class="docs-eyebrow">Batch Runs</p>
+            <h2>일괄 처리 API</h2>
+            <p>컬렉션에 포함된 파일들에 <code>convert_document</code>, <code>segment_document</code>, <code>extract_structured_data</code>를 일괄 실행합니다.</p>
+            <table>
+              <thead><tr><th>Method</th><th>Path</th><th>설명</th></tr></thead>
+              <tbody>
+                <tr><td><code>GET</code></td><td><code>/api/v1/batch_runs</code></td><td>batch run 목록</td></tr>
+                <tr><td><code>POST</code></td><td><code>/api/v1/batch_runs</code></td><td>batch run 시작</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/batch_runs/{batch_run_id}</code></td><td>batch run 상태</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/batch_runs/{batch_run_id}/results</code></td><td>batch run 결과</td></tr>
+              </tbody>
+            </table>
+            <pre><code>curl -X POST http://127.0.0.1:18110/api/v1/batch_runs \
+  -H "content-type: application/json" \
+  -d "{\"collection_id\":1,\"operation\":\"convert_document\",\"params\":{\"output_format\":\"json\"}}"</code></pre>
+          </section>
+
+          <section class="endpoint" id="eval-rubrics">
+            <p class="docs-eyebrow">Eval Rubrics</p>
+            <h2>평가 루브릭 API</h2>
+            <p>추출 결과를 비교 평가하기 위한 필드/가중치 기준을 관리합니다.</p>
+            <table>
+              <thead><tr><th>Method</th><th>Path</th><th>설명</th></tr></thead>
+              <tbody>
+                <tr><td><code>GET</code></td><td><code>/api/v1/eval_rubrics</code></td><td>루브릭 목록</td></tr>
+                <tr><td><code>POST</code></td><td><code>/api/v1/eval_rubrics</code></td><td>루브릭 생성</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/eval_rubrics/{rubric_id}</code></td><td>루브릭 조회</td></tr>
+                <tr><td><code>PUT</code></td><td><code>/api/v1/eval_rubrics/{rubric_id}</code></td><td>루브릭 수정</td></tr>
+                <tr><td><code>DELETE</code></td><td><code>/api/v1/eval_rubrics/{rubric_id}</code></td><td>루브릭 삭제</td></tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="endpoint" id="custom-pipelines">
+            <p class="docs-eyebrow">Custom Pipelines</p>
+            <h2>커스텀 파이프라인 호환 API</h2>
+            <p>현재는 workflow 저장소를 파이프라인 목록으로 노출하는 경량 호환 레이어입니다. Datalab의 전체 processor 버전관리, transfer, archive/restore, customizer 기능은 아직 구현 대상이 아닙니다.</p>
+            <table>
+              <thead><tr><th>Method</th><th>Path</th><th>설명</th></tr></thead>
+              <tbody>
+                <tr><td><code>GET</code></td><td><code>/api/v1/check_pipeline_access</code></td><td>사용 가능한 파이프라인 기능 확인</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/v1/custom_pipelines</code></td><td>workflow 기반 custom pipeline 목록</td></tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="endpoint" id="demo-ui">
+            <p class="docs-eyebrow">Demo Client</p>
+            <h2>체험 UI 보조 경로</h2>
+            <p>아래 경로는 제품 OCR API가 아니라 브라우저 UI를 위한 보조 경로입니다. 데모 자동화나 QA에는 사용할 수 있지만, 외부 연동 계약은 <code>/api/v1/*</code>를 기준으로 잡습니다.</p>
+            <table>
+              <thead><tr><th>Method</th><th>Path</th><th>설명</th></tr></thead>
+              <tbody>
+                <tr><td><code>GET</code></td><td><code>/playground/</code></td><td>OCR 체험 UI</td></tr>
+                <tr><td><code>GET</code></td><td><code>/playground/docs</code></td><td>OCR 문서</td></tr>
+                <tr><td><code>GET</code></td><td><code>/playground/api-reference</code></td><td>API Reference 문서</td></tr>
+                <tr><td><code>POST</code></td><td><code>/playground/api/convert/start</code></td><td>UI에서 파일을 올리고 비동기 변환을 시작</td></tr>
+                <tr><td><code>GET</code></td><td><code>/playground/api/convert/{request_id}</code></td><td>UI 변환 상태와 결과 조회</td></tr>
+                <tr><td><code>POST</code></td><td><code>/playground/api/convert</code></td><td>이전 UI 호환용 동기 변환 endpoint</td></tr>
+                <tr><td><code>GET</code></td><td><code>/playground/api/images/{request_id}/{asset_name}</code></td><td>페이지 이미지/crop 이미지 조회</td></tr>
+                <tr><td><code>GET</code></td><td><code>/playground/api/download/{request_id}</code></td><td>이미지 포함 ZIP 다운로드</td></tr>
+              </tbody>
+            </table>
+          </section>
+        </article>
+
+        <aside class="code-rail">
+          <div class="code-card">
+            <div class="code-card-title">Marker Convert</div>
+            <pre><code>import requests
+
+base_url = "http://127.0.0.1:18110"
+
+with open("sample.pdf", "rb") as file:
+    response = requests.post(
+        f"{base_url}/api/v1/marker",
+        files={"file": file},
+        data={
+            "output_format": "json,markdown,html,chunks",
+            "mode": "balanced",
+            "page_range": "0",
+        },
+    )
+
+request_id = response.json()["request_id"]
+result = requests.get(f"{base_url}/api/v1/marker/{request_id}")
+print(result.json())</code></pre>
+          </div>
+          <div class="code-card">
+            <div class="code-card-title">File to Document</div>
+            <pre><code>import requests
+
+base_url = "http://127.0.0.1:18110"
+
+with open("sample.pdf", "rb") as file:
+    file_res = requests.post(
+        f"{base_url}/api/v1/files",
+        files={"file": file},
+    ).json()
+
+doc_req = requests.post(
+    f"{base_url}/api/v1/create_document",
+    json={"file_id": file_res["file_id"]},
+).json()
+
+doc_result = requests.get(doc_req["request_check_url"]).json()
+document_id = doc_result["document"]["document_id"]</code></pre>
+          </div>
+          <div class="code-card">
+            <div class="code-card-title">Structured Extraction</div>
+            <pre><code>schema_req = requests.post(
+    f"{base_url}/api/v1/generate_extraction_schemas",
+    json={"field_names": ["title", "summary"]},
+).json()
+
+schema = requests.get(schema_req["request_check_url"]).json()["schema"]
+
+extract_req = requests.post(
+    f"{base_url}/api/v1/extract_structured_data",
+    json={"document_id": document_id, "schema": schema},
+).json()</code></pre>
+          </div>
+          <div class="code-card">
+            <div class="code-card-title">Image-preserving ZIP</div>
+            <pre><code>curl -o result.zip \
+  http://127.0.0.1:18110/playground/api/download/{request_id}</code></pre>
+          </div>
+        </aside>
+      </main>
+    </section>
+  </div>
+</body>
+</html>

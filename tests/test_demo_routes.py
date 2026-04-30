@@ -14,7 +14,7 @@ from sqlalchemy import select
 
 
 PNG_1X1 = base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Z6iQAAAAASUVORK5CYII="
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC"
 )
 
 
@@ -26,7 +26,7 @@ def _as_container_output_path(actual_path: Path, output_root: Path) -> str:
     return f"/data/runtime/output/{actual_path.relative_to(output_root).as_posix()}"
 
 
-def _bootstrap_app(tmp_path: Path, monkeypatch):
+def _bootstrap_app(tmp_path: Path, monkeypatch, *, root_path: str = ""):
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{(tmp_path / 'news_ocr.db').as_posix()}")
     monkeypatch.setenv("INPUT_ROOT", str((tmp_path / "input").resolve()))
     monkeypatch.setenv("OUTPUT_ROOT", str((tmp_path / "output").resolve()))
@@ -220,6 +220,18 @@ def _bootstrap_app(tmp_path: Path, monkeypatch):
                     "publication_bbox": [24, 18, 140, 52],
                     "issue_bbox": [180, 18, 430, 52],
                 },
+                "ocr_quality": {
+                    "status": "warning",
+                    "score": 0.68,
+                    "char_count": 220,
+                    "korean_ratio": 0.73,
+                    "average_confidence": 0.91,
+                    "block_count": 8,
+                    "image_count": 1,
+                    "article_count": 1,
+                    "needs_review": True,
+                    "reasons": ["low_text"],
+                },
                 "caption_count": 1,
                 "captions": [
                     {
@@ -243,6 +255,31 @@ def _bootstrap_app(tmp_path: Path, monkeypatch):
                         ],
                     }
                 ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    page_bundle = storage.page_bundle_dir(job.job_key, pdf_file.file_name, page.page_number)
+    (page_bundle / "page.json").write_text(
+        json.dumps(
+            {
+                "job_id": job.job_key,
+                "pdf_file": pdf_file.file_name,
+                "page_number": page.page_number,
+                "ocr_quality": {
+                    "status": "warning",
+                    "score": 0.68,
+                    "char_count": 220,
+                    "korean_ratio": 0.73,
+                    "average_confidence": 0.91,
+                    "block_count": 8,
+                    "image_count": 1,
+                    "article_count": 1,
+                    "needs_review": True,
+                    "reasons": ["low_text"],
+                },
             },
             ensure_ascii=False,
             indent=2,
@@ -299,7 +336,7 @@ def _bootstrap_app(tmp_path: Path, monkeypatch):
 
     return {
         "app": app,
-        "client": TestClient(app),
+        "client": TestClient(app, root_path=root_path),
         "db": db,
         "bundle_dir": bundle_dir,
         "input_dir": input_dir,
@@ -319,18 +356,29 @@ def test_demo_jobs_renders_article_detail(tmp_path: Path, monkeypatch) -> None:
     response = ctx["client"].get("/demo/jobs")
 
     assert response.status_code == 200
-    assert "Operator Demo" in response.text
+    assert "작업 화면" in response.text
     assert "Edited headline" in response.text
     assert "국회 유사도" in response.text
-    assert "gpt-oss-20b" in response.text
-    assert "connection refused" in response.text
+    assert "연결 실패" in response.text
     assert "부두에 정박한 상륙함을 향해 장병들이 손을 흔들고 있다." in response.text
     assert "/demo/jobs/start-dir" in response.text
     assert "/demo/jobs/start-file" in response.text
     assert "폴더 처리 시작" in response.text
-    assert "단일 PDF 처리" in response.text
-    assert "TARGET_API_BASE_URL" in response.text
+    assert "단일 파일 처리" in response.text
+    assert "작업 찾기" in response.text
+    assert 'data-job-search' in response.text
+    assert 'data-preset="quick"' in response.text
+    assert "빠른 확인" in response.text
+    assert "확인 필요한 쪽만 보기" in response.text
+    assert "confirmJobDelete" in response.text
     assert "http://env.test/news" not in response.text
+    assert "국회로 보내기" in response.text
+    assert "읽기 품질" in response.text
+    assert "검사 확인 필요" in response.text
+    assert "읽기 0.68" in response.text
+    assert f"/api/v1/jobs/{ctx['job_key']}/news-payload" in response.text
+    assert f"/demo/jobs/{ctx['job_key']}/deliver" in response.text
+    assert "<details" in response.text
     assert 'type="file"' in response.text
     assert 'name="pdf_file"' in response.text
     assert 'name="pdf_files"' in response.text
@@ -357,9 +405,226 @@ def test_demo_jobs_renders_article_detail(tmp_path: Path, monkeypatch) -> None:
     assert payload["files"][0]["articles"][0]["body_text"] == "LLM body"
     assert payload["files"][0]["articles"][0]["original_title"] == "OCR Title"
     assert payload["files"][0]["articles"][0]["corrected_title"] == "LLM headline"
+    assert payload["files"][0]["articles"][0]["delivery_status"] == "failed"
+    assert payload["files"][0]["articles"][0]["delivery_last_error"] == "connection refused"
     assert payload["files"][0]["articles"][0]["source_metadata"]["publication"] == "한겨레"
     assert payload["files"][0]["articles"][0]["source_metadata"]["issue_page_label"] == "019면"
+    assert payload["files"][0]["articles"][0]["ocr_quality"]["status"] == "warning"
+    assert payload["files"][0]["articles"][0]["ocr_quality"]["reasons"] == ["low_text"]
     assert payload["files"][0]["articles"][0]["images"][0]["captions"][0]["text"] == "부두에 정박한 상륙함을 향해 장병들이 손을 흔들고 있다."
+
+    detail_response = ctx["client"].get(f"/api/v1/jobs/{ctx['job_key']}/detail")
+    assert detail_response.status_code == 200
+    detail_payload = detail_response.json()
+    assert detail_payload["quality"]["status"] == "warning"
+    assert detail_payload["quality"]["review_pages"] == 1
+    assert detail_payload["pdf_files"][0]["pages"][0]["quality_status"] == "warning"
+
+
+def test_demo_jobs_restores_archived_output_without_db_rows(tmp_path: Path, monkeypatch) -> None:
+    ctx = _bootstrap_app(tmp_path, monkeypatch)
+    output_root = tmp_path / "output"
+    archive_root = output_root / "job_20260422_101010" / "archive-pdf"
+    page_dir = archive_root / "parsed" / "page_0001"
+    article_dir = page_dir / "article_01_archive-headline"
+    image_dir = article_dir / "images"
+    raw_dir = archive_root / "raw"
+    pages_dir = archive_root / "pages"
+    for directory in [image_dir, raw_dir, pages_dir]:
+        directory.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (800, 1100), color="white").save(pages_dir / "page_0001.png")
+    Image.new("RGB", (120, 80), color="black").save(image_dir / "image_01.png")
+    (raw_dir / "page_0001_vl.json").write_text(
+        json.dumps(
+            {
+                "parsing_res_list": [
+                    {"label": "title", "bbox": [40, 50, 500, 120], "content": "Archive Headline"},
+                    {"label": "text", "bbox": [40, 140, 650, 460], "content": "archive body text"},
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (raw_dir / "page_0001_structure.json").write_text("{}", encoding="utf-8")
+    (raw_dir / "page_0001_fallback_ocr.json").write_text("{}", encoding="utf-8")
+    article_payload = {
+        "job_id": "job_20260422_101010",
+        "pdf_file": "archive pdf.pdf",
+        "page_number": 1,
+        "article_id": 900,
+        "article_order": 1,
+        "title": "Archive Headline",
+        "body_text": "archive body text",
+        "title_bbox": [40, 50, 500, 120],
+        "article_bbox": [35, 45, 700, 600],
+        "confidence": 0.88,
+        "images": [
+            {
+                "image_order": 1,
+                "relative_path": "images/image_01.png",
+                "bbox": [100, 200, 220, 280],
+                "width": 120,
+                "height": 80,
+                "captions": [{"text": "archive caption", "bbox": [100, 285, 220, 320]}],
+            }
+        ],
+        "captions": [{"text": "archive caption", "bbox": [100, 285, 220, 320]}],
+        "relevance_score": 0.77,
+        "relevance_reason": "archived result",
+    }
+    article_dir.mkdir(parents=True, exist_ok=True)
+    (article_dir / "article.json").write_text(json.dumps(article_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    (article_dir / "article.md").write_text("# Archive Headline\n\narchive body text\n", encoding="utf-8")
+    (page_dir / "page.json").write_text(
+        json.dumps(
+            {
+                "job_id": "job_20260422_101010",
+                "pdf_file": "archive pdf.pdf",
+                "page_number": 1,
+                "articles": [
+                    {
+                        "article_order": 1,
+                        "metadata_path": str(article_dir / "article.json"),
+                        "bundle_dir": str(article_dir),
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    response = ctx["client"].get("/demo/jobs?job_id=job_20260422_101010&view=render")
+
+    assert response.status_code == 200
+    assert "Archive Headline" in response.text
+    assert "archive body text" in response.text
+    assert "최근 작업" in response.text
+    assert "결과 복구" in response.text
+    db = ctx["session_module"].SessionLocal()
+    imported_job = db.scalar(select(_fresh_import("app.db.models").Job).where(_fresh_import("app.db.models").Job.job_key == "job_20260422_101010"))
+    imported_article = db.scalar(select(_fresh_import("app.db.models").Article).where(_fresh_import("app.db.models").Article.title == "Archive Headline"))
+    db.close()
+    assert imported_job is not None
+    assert imported_article is not None
+
+
+def test_job_news_payload_preview_api_shows_congress_delivery_contract(tmp_path: Path, monkeypatch) -> None:
+    ctx = _bootstrap_app(tmp_path, monkeypatch)
+
+    response = ctx["client"].get(f"/api/v1/jobs/{ctx['job_key']}/news-payload")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["job_id"] == ctx["job_key"]
+    assert payload["target_configured"] is True
+    assert payload["target_url"] == "http://env.test/news"
+    assert payload["delivery_status"] == "warning"
+    assert payload["ready_count"] == 1
+    assert payload["warning_count"] == 1
+    assert payload["blocked_count"] == 0
+    assert payload["article_count"] == 2
+    assert payload["included_image_count"] == 1
+    first_article = payload["articles"][0]
+    assert first_article["validation_status"] == "ready"
+    assert first_article["title"] == "LLM headline"
+    assert first_article["request_article"]["imgs"][0]["src"] == "file_0_0"
+    assert first_article["images"][0]["included"] is True
+    assert first_article["images"][0]["caption"] == "부두에 정박한 상륙함을 향해 장병들이 손을 흔들고 있다"
+    assert payload["body"][0] == first_article["request_article"]
+
+
+def test_job_deliver_api_updates_delivery_state(tmp_path: Path, monkeypatch) -> None:
+    ctx = _bootstrap_app(tmp_path, monkeypatch)
+    captured: dict[str, object] = {}
+
+    class DummyResponse:
+        status_code = 200
+        text = "ok"
+
+        def json(self):
+            return {}
+
+    def fake_post(url, *, data=None, files=None, headers=None, timeout=None):
+        captured["url"] = url
+        for field_name, file_payload in files:
+            if field_name == "body":
+                captured["body"] = json.loads(file_payload[1])
+                break
+        return DummyResponse()
+
+    monkeypatch.setattr(_fresh_import("app.services.news_delivery").httpx, "post", fake_post)
+
+    response = ctx["client"].post(f"/api/v1/jobs/{ctx['job_key']}/deliver")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["target_url"] == "http://env.test/news"
+    assert payload["delivered"] == 2
+    assert payload["failed"] == 0
+    assert captured["url"] == "http://env.test/news"
+    state = json.loads((ctx["bundle_dir"] / "delivery.json").read_text(encoding="utf-8"))
+    assert state["delivery_status"] == "delivered"
+    assert state["request_article"]["title"] == "LLM headline"
+
+
+def test_run_single_rejects_non_pdf_body(tmp_path: Path, monkeypatch) -> None:
+    ctx = _bootstrap_app(tmp_path, monkeypatch)
+
+    response = ctx["client"].post(
+        "/api/v1/jobs/run-single?file_name=not-a-pdf.pdf",
+        content=b"this is not a pdf",
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "request body is not a PDF"
+
+
+def test_run_single_accepts_image_body(tmp_path: Path, monkeypatch) -> None:
+    ctx = _bootstrap_app(tmp_path, monkeypatch)
+    scheduled: list[int] = []
+
+    class StubScheduler:
+        async def schedule(self, job_id: int) -> None:
+            scheduled.append(job_id)
+
+    monkeypatch.setattr(
+        _fresh_import("app.api.routes.jobs"),
+        "get_job_scheduler",
+        lambda: StubScheduler(),
+    )
+
+    response = ctx["client"].post(
+        "/api/v1/jobs/run-single?file_name=page.png",
+        content=PNG_1X1,
+        headers={"content-type": "image/png"},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["job_id"].startswith("job_")
+    db = ctx["session_module"].SessionLocal()
+    jobs = list(db.scalars(select(_fresh_import("app.db.models").Job)))
+    created_job = next(job for job in jobs if job.job_key != ctx["job_key"])
+    staged_files = list(Path(created_job.source_dir).glob("*"))
+    db.close()
+    assert [path.name for path in staged_files] == ["page.png"]
+    assert scheduled
+
+
+def test_demo_static_assets_are_root_path_aware_and_cache_busted(tmp_path: Path, monkeypatch) -> None:
+    ctx = _bootstrap_app(tmp_path, monkeypatch, root_path="/a-cong-ocr")
+
+    response = ctx["client"].get("/demo/jobs")
+    static_response = ctx["client"].get("/static/demo.css")
+
+    assert response.status_code == 200
+    assert 'href="/a-cong-ocr/static/demo.css?v=' in response.text
+    assert 'src="/a-cong-ocr/static/htmx-lite.js?v=' in response.text
+    assert "?v=20260402" not in response.text
+    assert static_response.status_code == 200
+    assert static_response.headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert static_response.headers["x-content-type-options"] == "nosniff"
 
 
 def test_demo_jobs_render_panel_shows_all_articles_on_preview_page(tmp_path: Path, monkeypatch) -> None:
@@ -444,7 +709,17 @@ def test_start_dir_job_route_queues_new_job(tmp_path: Path, monkeypatch) -> None
 
     response = ctx["client"].post(
         "/demo/jobs/start-dir",
-        data={"source_dir": str(ctx["input_dir"]), "view": "render"},
+        data={
+            "source_dir": str(ctx["input_dir"]),
+            "view": "render",
+            "ocr_mode": "accurate",
+            "page_range": "0",
+            "max_pages": "1",
+            "output_format": "json,markdown,html,chunks",
+            "paginate": "true",
+            "add_block_ids": "true",
+            "include_markdown_in_chunks": "true",
+        },
         follow_redirects=False,
     )
 
@@ -455,6 +730,15 @@ def test_start_dir_job_route_queues_new_job(tmp_path: Path, monkeypatch) -> None
     db.close()
     assert len(jobs) == 2
     assert scheduled
+    created_job = next(job for job in jobs if job.job_key != ctx["job_key"])
+    config = _fresh_import("app.services.storage").OutputStorage().load_job_config(created_job.job_key)
+    assert config["ocr_options"]["ocr_mode"] == "accurate"
+    assert config["ocr_options"]["page_range"] == "0"
+    assert config["ocr_options"]["max_pages"] == 1
+    assert config["ocr_options"]["output_formats"] == ["json", "markdown", "html", "chunks"]
+    assert config["ocr_options"]["paginate"] is True
+    assert config["ocr_options"]["add_block_ids"] is True
+    assert config["ocr_options"]["include_markdown_in_chunks"] is True
 
 
 def test_start_file_job_route_queues_new_job(tmp_path: Path, monkeypatch) -> None:
@@ -546,6 +830,38 @@ def test_start_file_job_route_accepts_uploaded_pdf(tmp_path: Path, monkeypatch) 
     jobs = list(db.scalars(select(_fresh_import("app.db.models").Job)))
     db.close()
     assert len(jobs) == 2
+    assert scheduled
+
+
+def test_start_file_job_route_accepts_uploaded_image(tmp_path: Path, monkeypatch) -> None:
+    ctx = _bootstrap_app(tmp_path, monkeypatch)
+    scheduled: list[int] = []
+
+    class StubScheduler:
+        async def schedule(self, job_id: int) -> None:
+            scheduled.append(job_id)
+
+    monkeypatch.setattr(
+        _fresh_import("app.web.demo_service"),
+        "get_job_scheduler",
+        lambda: StubScheduler(),
+    )
+
+    response = ctx["client"].post(
+        "/demo/jobs/start-file",
+        data={"view": "render"},
+        files={"pdf_file": ("page.png", PNG_1X1, "image/png")},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert "/demo/jobs?job_id=job_" in response.headers["location"]
+    db = ctx["session_module"].SessionLocal()
+    jobs = list(db.scalars(select(_fresh_import("app.db.models").Job)))
+    created_job = next(job for job in jobs if job.job_key != ctx["job_key"])
+    staged_files = list(Path(created_job.source_dir).glob("*"))
+    db.close()
+    assert [path.name for path in staged_files] == ["page.png"]
     assert scheduled
 
 
@@ -668,8 +984,8 @@ def test_demo_jobs_preview_navigation_can_open_next_pdf_page(tmp_path: Path, mon
     next_page = ctx["client"].get(f"/demo/jobs?job_id={ctx['job_key']}&article_id={ctx['article_2_id']}&view=render")
 
     assert next_page.status_code == 200
-    assert "Page 2" in next_page.text
-    assert 'alt="page 2"' in next_page.text
+    assert "2쪽" in next_page.text
+    assert 'alt="2쪽"' in next_page.text
     assert "Second Page Headline" in next_page.text
 
 
@@ -704,12 +1020,11 @@ def test_demo_jobs_show_live_running_page_and_stage(tmp_path: Path, monkeypatch)
     response = ctx["client"].get(f"/demo/jobs?job_id={ctx['job_key']}&article_id={ctx['article_id']}&view=render")
 
     assert response.status_code == 200
-    assert "Live Status" in response.text
-    assert "Job Overview" in response.text
-    assert "Chandra OCR" in response.text
-    assert "calling remote OCR service" in response.text
-    assert "page 2" in response.text
-    assert "running" in response.text
+    assert "처리 상태" in response.text
+    assert "작업 요약" in response.text
+    assert "글자 읽는 중" in response.text
+    assert "2쪽" in response.text
+    assert "처리중" in response.text
     assert 'data-auto-refresh-seconds="2"' in response.text
 
 
@@ -774,8 +1089,8 @@ def test_demo_jobs_json_view_shows_delivery_request_payload(tmp_path: Path, monk
     response = ctx["client"].get(f"/demo/jobs?job_id={ctx['job_key']}&article_id={ctx['article_id']}&view=json")
 
     assert response.status_code == 200
-    assert "/news payload" in response.text
-    assert "operator payload" in response.text
+    assert "전송값" in response.text
+    assert "작업값" in response.text
     assert "file_0_0" in response.text
     assert "한겨레" in response.text
     assert "https://api.test/news" not in response.text

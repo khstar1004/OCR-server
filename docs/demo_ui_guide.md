@@ -7,16 +7,17 @@
 - 데모 UI는 `GET /demo/jobs`에서 시작합니다.
 - 화면 데이터는 DB와 기사 번들 파일을 함께 읽습니다.
 - 그래서 `news_output` 폴더만 있어서는 부족할 수 있습니다.
-- 최소 한 번은 OCR 작업이 실행되어 DB에 job / pdf / page / article 레코드가 있어야 합니다.
+- 최소 한 번은 OCR 작업이 실행되어 DB에 job / file / page / article 레코드가 있어야 합니다.
 
 ## 가장 빠른 확인 절차
 
 1. 서버 실행
-2. [news_pdfs](C:\Users\USER\Desktop\a-cong-OCR-V2\news_pdfs)에 PDF 넣기
-3. PDF 1건 처리
+2. [news_pdfs](C:\Users\USER\Desktop\a-cong-OCR-V2\news_pdfs)에 PDF 또는 이미지 넣기
+3. PDF/이미지 1건 처리
 4. `/demo/jobs` 접속
-5. 기사 선택
-6. `Reprocess`, `Redeliver` 동작 확인
+5. OCR mode/page range/output 옵션 선택
+6. 기사 선택
+7. `Reprocess`, `Redeliver` 동작 확인
 
 기본 입력 폴더:
 
@@ -47,11 +48,11 @@ docker compose up -d
 
 - `http://127.0.0.1:18000/demo/jobs`
 
-## 2. PDF 1건 처리
+## 2. PDF/이미지 1건 처리
 
-가장 확실한 방법은 `run-single` API로 샘플 PDF를 직접 넣는 것입니다.
+가장 확실한 방법은 `run-single` API로 샘플 PDF 또는 이미지를 직접 넣는 것입니다. 암호화 PDF 때문에 서버에서 렌더링할 수 없다면 페이지 이미지를 PNG/JPG/WEBP로 넣으면 됩니다.
 
-`run-daily`를 쓰는 경우에는 먼저 PDF를 [news_pdfs](C:\Users\USER\Desktop\a-cong-OCR-V2\news_pdfs)에 넣으면 됩니다.
+`run-daily`를 쓰는 경우에는 먼저 PDF/이미지를 [news_pdfs](C:\Users\USER\Desktop\a-cong-OCR-V2\news_pdfs)에 넣으면 됩니다.
 
 ### 로컬 서버 포트 8000 기준
 
@@ -75,16 +76,28 @@ Invoke-WebRequest `
 
 성공하면 `job_id`가 반환됩니다.
 
+이미지 입력 예:
+
+```powershell
+Invoke-WebRequest `
+  -Method Post `
+  -InFile .\page-001.png `
+  -ContentType "image/png" `
+  -Uri "http://127.0.0.1:8000/api/v1/jobs/run-single?file_name=page-001.png&force_reprocess=true"
+```
+
 ## 3. 데모 화면에서 보는 순서
 
 ### `/demo/jobs`
 
 - 최근 job 목록이 좌측에 보입니다.
 - 새로 만든 `job_id`가 보여야 정상입니다.
+- 상단 실행 영역은 Datalab 스타일로 `Fast / Balanced / Accurate`, `Page Range`, `Max Pages`, `Output`만 먼저 보여줍니다.
+- 세부 옵션은 `Additional Config`를 펼쳐야 보입니다.
 
 ### 중앙 트리
 
-- PDF 단위 그룹이 보입니다.
+- 파일 단위 그룹이 보입니다.
 - page 단위 하위 항목이 보입니다.
 - article 링크를 누르면 우측 상세 패널이 갱신됩니다.
 
@@ -92,13 +105,16 @@ Invoke-WebRequest `
 
 반드시 확인할 항목:
 
-- source PDF / job 정보
+- source file / job 정보
 - page image preview
 - article bounding box overlay
 - raw OCR output
 - corrected article text
+- `Compare` 탭에서 Chandra OCR, corrected text, `/news payload` 비교
 - relevance score / reason
+- OCR quality score / review reason
 - delivery status / last error
+- National Assembly API payload validation 상태
 
 ## 4. 액션 확인
 
@@ -127,6 +143,7 @@ Invoke-WebRequest `
 - 교정 상태: `annotation.json`
 - 점수/사유: `enrichment.json`
 - 재전송 상태: `demo_delivery.json` 또는 `delivery.json`
+- OCR 품질: `page.json`의 `ocr_quality`, `article.json`의 `ocr_quality`
 
 ## 자주 헷갈리는 부분
 
@@ -141,7 +158,7 @@ Invoke-WebRequest `
 가장 빠른 해결:
 
 1. 현재 서버가 보는 DB 경로를 확인
-2. `run-single`로 PDF 한 건 다시 실행
+2. `run-single`로 PDF 또는 이미지 한 건 다시 실행
 3. `/demo/jobs` 새로고침
 
 ### 기사 상세는 뜨는데 correction / score / delivery가 비는 경우
@@ -162,6 +179,9 @@ Invoke-WebRequest `
 - bbox overlay가 기사 위치와 맞는다
 - raw OCR와 corrected text를 둘 다 볼 수 있다
 - score / reason이 있으면 표시된다
+- OCR Quality 카드와 기사별 `ocr` badge가 표시된다
+- `Compare` 탭에서 원문 OCR, 교정문, 전송 payload가 나란히 보인다
+- 국회 API 영역에서 ready / warning / blocked 사전검증 수가 보인다
 - delivery status / last error가 있으면 표시된다
 - `Reprocess` 후 새 job이 생긴다
 - `Redeliver` 후 delivery 상태 파일이 갱신된다

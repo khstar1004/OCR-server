@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -11,22 +12,31 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from PIL import Image
 
+from app.api.playground import router as playground_router
 from app.core.config import get_settings
 from app.domain.types import PageLayout
 from app.ocr.rendering import render_pdf_document
 from app.services.artifacts import build_job_artifact_layout
-from app.services.datalab_compat import DatalabCompatService
+from app.services.datalab_compat import (
+    DatalabCompatService,
+    normalize_marker_mode,
+    normalize_marker_output_formats,
+    parse_page_range,
+)
 from app.services.datalab_defense import DefenseDataService
 from app.services.ocr_engine import OCREngine
+from app.services.runtime_config import get_runtime_config_store, runtime_config_value
+from app.services.auth_store import require_admin_user
 
 router = APIRouter(prefix="/api/v1", tags=["ocr-service"])
 compat_router = APIRouter(tags=["datalab-compat"])
 
 
-def _serialize_block(block: object) -> dict[str, Any]:
+def _serialize_block(block: object, *, order: int | None = None) -> dict[str, Any]:
     return {
         "block_id": getattr(block, "block_id", ""),
         "page_number": getattr(block, "page_number", 0),
+        "order": order,
         "label": str(getattr(block, "label", "")).split(".")[-1].lower(),
         "bbox": list(getattr(block, "bbox", [])),
         "text": str(getattr(block, "text", "")),
@@ -35,21 +45,69 @@ def _serialize_block(block: object) -> dict[str, Any]:
     }
 
 
-def _serialize_layout(layout: PageLayout) -> dict[str, Any]:
-    return {
+def _layout_text(layout: PageLayout) -> str:
+    return "\n".join(
+        str(getattr(block, "text", "") or "").strip()
+        for block in layout.blocks
+        if str(getattr(block, "text", "") or "").strip()
+    )
+
+
+def _layout_markdown(layout: PageLayout) -> str:
+    chunks: list[str] = []
+    for block in layout.blocks:
+        text = str(getattr(block, "text", "") or "").strip()
+        if not text:
+            continue
+        label = str(getattr(block, "label", "")).split(".")[-1].lower()
+        if label == "title":
+            chunks.append(f"## {text}")
+        else:
+            chunks.append(text)
+    return "\n\n".join(chunks)
+
+
+def _serialize_layout(layout: PageLayout, *, include_raw: bool = True) -> dict[str, Any]:
+    payload = {
         "page_number": layout.page_number,
         "width": layout.width,
         "height": layout.height,
         "image_path": layout.image_path.name,
-        "blocks": [_serialize_block(block) for block in layout.blocks],
-        "raw_vl": layout.raw_vl,
-        "raw_structure": layout.raw_structure,
-        "raw_fallback_ocr": layout.raw_fallback_ocr,
+        "text": _layout_text(layout),
+        "markdown": _layout_markdown(layout),
+        "block_count": len(layout.blocks),
+        "blocks": [_serialize_block(block, order=index) for index, block in enumerate(layout.blocks)],
     }
+    if include_raw:
+        payload["raw_vl"] = layout.raw_vl
+        payload["raw_structure"] = layout.raw_structure
+        payload["raw_fallback_ocr"] = layout.raw_fallback_ocr
+    return payload
 
 
 def _serialize_pdf_response(pages: list[dict[str, Any]], page_count: int, pdf_name: str) -> dict[str, Any]:
-    return {"page_count": page_count, "pdf_name": pdf_name, "pages": pages}
+    return {
+        "page_count": len(pages),
+        "source_page_count": page_count,
+        "processed_page_count": len(pages),
+        "pdf_name": pdf_name,
+        "text": "\n\n".join(str(page.get("text") or "") for page in pages if str(page.get("text") or "").strip()),
+        "markdown": "\n\n".join(str(page.get("markdown") or "") for page in pages if str(page.get("markdown") or "").strip()),
+        "pages": pages,
+    }
+
+
+def _select_rendered_pages(pages: tuple[Any, ...], *, max_pages: int | None, page_range: str | None) -> list[Any]:
+    if max_pages is not None and max_pages <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="max_pages must be a positive integer")
+    try:
+        indices = parse_page_range(page_range)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+    selected = [page for index, page in enumerate(pages) if indices is None or index in indices]
+    if max_pages is not None:
+        selected = selected[:max_pages]
+    return selected
 
 
 def _read_image_size(image_path: Path) -> tuple[int, int]:
@@ -70,6 +128,8 @@ def _get_defense_service(request: Request) -> DefenseDataService:
 
 
 def _warmup_ocr_engine(engine: OCREngine) -> None:
+    if engine._should_use_remote_service():
+        return
     # Load the model at startup so the first OCR request does not pay the full model-load cost.
     config = engine._build_chandra_config()
     runner = engine._get_chandra_runner(config)
@@ -81,6 +141,32 @@ def _pick_upload(file: UploadFile | None, file_alias: UploadFile | None) -> Uplo
     if upload is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="file is required")
     return upload
+
+
+async def _read_compat_input(
+    compat: DatalabCompatService,
+    *,
+    file: UploadFile | None,
+    file_alias: UploadFile | None,
+    file_url: str | None,
+) -> tuple[bytes, str, str]:
+    upload = file or file_alias
+    if upload is not None:
+        payload = await upload.read()
+        if not payload:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="empty upload")
+        return payload, upload.filename or "document.bin", "upload"
+
+    cleaned_url = str(file_url or "").strip()
+    if not cleaned_url:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="file is required")
+    try:
+        resolved = await run_in_threadpool(compat.resolve_input_file_url, cleaned_url)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+    if not resolved.content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="empty upload")
+    return resolved.content, resolved.file_name, resolved.source
 
 
 def _create_async_request(
@@ -102,6 +188,78 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@router.get("/capabilities", response_class=JSONResponse)
+def capabilities(request: Request) -> dict[str, Any]:
+    compat = _get_compat_service(request)
+    settings = get_settings()
+    return {
+        "service": "army-ocr",
+        "ocr_backend": settings.ocr_backend,
+        "versions": compat.versions(),
+        "input_formats": ["pdf", "png", "jpg", "jpeg", "webp"],
+        "endpoints": {
+            "sync_image": "/api/v1/ocr/image",
+            "sync_pdf": "/api/v1/ocr/pdf",
+            "async_ocr": "/api/v1/ocr",
+            "async_marker": "/api/v1/marker",
+            "thumbnails": "/api/v1/thumbnails/{request_id}",
+            "request_cleanup": "/api/v1/requests",
+            "runtime_settings": "/api/v1/runtime-settings",
+            "playground": "/playground",
+        },
+        "features": {
+            "page_range": True,
+            "max_pages": True,
+            "file_url": True,
+            "max_concurrent_ocr_requests": int(
+                runtime_config_value("ocr_max_concurrent_requests", settings.ocr_max_concurrent_requests, settings)
+            ),
+            "runtime_settings": True,
+            "marker_modes": ["fast", "balanced", "accurate"],
+            "marker_output_formats": ["json", "markdown", "html", "chunks"],
+            "multi_output_format": True,
+            "paginate": True,
+            "add_block_ids": True,
+            "include_markdown_in_chunks": True,
+            "skip_cache": True,
+            "text": True,
+            "markdown": True,
+            "blocks": True,
+            "bounding_boxes": True,
+            "confidence": True,
+            "raw_payload_toggle": True,
+            "request_runtime_metadata": True,
+            "request_retention_cleanup": True,
+            "tables": False,
+            "forms": False,
+            "queries": False,
+            "selection_marks": False,
+        },
+    }
+
+
+@router.get("/runtime-settings", response_class=JSONResponse)
+def get_runtime_settings_api(request: Request) -> dict[str, Any]:
+    require_admin_user(request)
+    return get_runtime_config_store().snapshot()
+
+
+@router.put("/runtime-settings", response_class=JSONResponse)
+async def update_runtime_settings_api(request: Request) -> dict[str, Any]:
+    require_admin_user(request)
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid JSON body") from None
+    values = payload.get("values") if isinstance(payload, dict) else None
+    if not isinstance(values, dict):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="values object is required")
+    try:
+        return get_runtime_config_store().save(values)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+
+
 @router.post("/ocr/image")
 async def ocr_image(
     request: Request,
@@ -109,6 +267,7 @@ async def ocr_image(
     page_number: int = Form(default=1),
     width: int | None = Form(default=None),
     height: int | None = Form(default=None),
+    include_raw: bool = Form(default=True),
 ) -> dict[str, Any]:
     if page_number <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="page_number must be greater than zero")
@@ -144,7 +303,7 @@ async def ocr_image(
             height=int(resolved_height),
         )
 
-    return _serialize_layout(layout)
+    return _serialize_layout(layout, include_raw=include_raw)
 
 
 @router.post("/ocr/pdf")
@@ -152,6 +311,9 @@ async def ocr_pdf(
     request: Request,
     file: UploadFile = File(...),
     dpi: int = Form(default=300),
+    max_pages: int | None = Form(default=None),
+    page_range: str | None = Form(default=None),
+    include_raw: bool = Form(default=True),
 ) -> dict[str, Any]:
     filename = file.filename or "document.pdf"
     if not filename.lower().endswith(".pdf"):
@@ -160,6 +322,8 @@ async def ocr_pdf(
     pdf_bytes = await file.read()
     if not pdf_bytes:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="empty PDF upload")
+    if b"%PDF-" not in pdf_bytes[:1024]:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="request body is not a PDF")
     if dpi <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="dpi must be a positive integer")
 
@@ -174,10 +338,11 @@ async def ocr_pdf(
             source_key=filename,
         )
         rendered = render_pdf_document(pdf_path, layout, dpi=dpi)
+        selected_pages = _select_rendered_pages(rendered.pages, max_pages=max_pages, page_range=page_range)
 
         engine = _get_ocr_engine(request)
         pages: list[dict[str, Any]] = []
-        for page in rendered.pages:
+        for page in selected_pages:
             layout = await run_in_threadpool(
                 engine.parse_page,
                 image_path=page.image_path,
@@ -185,9 +350,9 @@ async def ocr_pdf(
                 width=page.width,
                 height=page.height,
             )
-            pages.append(_serialize_layout(layout))
+            pages.append(_serialize_layout(layout, include_raw=include_raw))
 
-        return _serialize_pdf_response(pages=pages, page_count=len(pages), pdf_name=filename)
+        return _serialize_pdf_response(pages=pages, page_count=len(rendered.pages), pdf_name=filename)
 
 
 @compat_router.get("/health", response_class=JSONResponse)
@@ -195,7 +360,7 @@ def health_alias(request: Request) -> dict[str, Any]:
     compat = _get_compat_service(request)
     return {
         "status": "ok",
-        "service": "a-cong OCR Service",
+        "service": "army-ocr Service",
         "compat_mode": "datalab-like-v1",
         "versions": compat.versions(),
     }
@@ -212,6 +377,7 @@ async def submit_ocr(
     background_tasks: BackgroundTasks,
     file: UploadFile | None = File(default=None),
     file_0: UploadFile | None = File(default=None, alias="file.0"),
+    file_url: str | None = Form(default=None),
     page_number: int = Form(default=1),
     width: int | None = Form(default=None),
     height: int | None = Form(default=None),
@@ -219,22 +385,18 @@ async def submit_ocr(
     max_pages: int | None = Form(default=None),
     page_range: str | None = Form(default=None),
 ) -> dict[str, Any]:
-    upload = _pick_upload(file, file_0)
-    payload = await upload.read()
-    if not payload:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="empty upload")
-
     compat = _get_compat_service(request)
+    payload, filename, input_source = await _read_compat_input(compat, file=file, file_alias=file_0, file_url=file_url)
     request_id = compat.create_request(
         "ocr",
         str(request.url_for("get_ocr_result_check", request_id="{request_id}")),
-        meta={"file_name": upload.filename},
+        meta={"file_name": filename, "input_source": input_source},
     )
     background_tasks.add_task(
         compat.process_ocr_request,
         request_id,
         file_bytes=payload,
-        file_name=upload.filename or "document.bin",
+        file_name=filename,
         page_number=page_number,
         width=width,
         height=height,
@@ -260,37 +422,59 @@ async def submit_marker(
     background_tasks: BackgroundTasks,
     file: UploadFile | None = File(default=None),
     file_0: UploadFile | None = File(default=None, alias="file.0"),
+    file_url: str | None = Form(default=None),
     page_number: int = Form(default=1),
     width: int | None = Form(default=None),
     height: int | None = Form(default=None),
     dpi: int = Form(default=300),
     max_pages: int | None = Form(default=None),
     page_range: str | None = Form(default=None),
-    output_format: str = Form(default="json"),
+    output_format: str = Form(default="markdown"),
+    mode: str = Form(default="balanced"),
+    paginate: bool = Form(default=False),
+    add_block_ids: bool = Form(default=False),
+    include_markdown_in_chunks: bool = Form(default=False),
+    skip_cache: bool = Form(default=False),
+    extras: str | None = Form(default=None),
+    additional_config: str | None = Form(default=None),
 ) -> dict[str, Any]:
-    upload = _pick_upload(file, file_0)
-    payload = await upload.read()
-    if not payload:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="empty upload")
-
+    try:
+        output_formats = normalize_marker_output_formats(output_format)
+        normalized_mode = normalize_marker_mode(mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
     compat = _get_compat_service(request)
+    payload, filename, input_source = await _read_compat_input(compat, file=file, file_alias=file_0, file_url=file_url)
     request_id = compat.create_request(
         "marker",
         str(request.url_for("get_marker_result_check", request_id="{request_id}")),
-        meta={"file_name": upload.filename, "output_format": output_format},
+        meta={
+            "file_name": filename,
+            "input_source": input_source,
+            "output_format": ",".join(output_formats),
+            "mode": normalized_mode,
+            "skip_cache": skip_cache,
+        },
     )
     background_tasks.add_task(
         compat.process_marker_request,
         request_id,
         file_bytes=payload,
-        file_name=upload.filename or "document.bin",
+        file_name=filename,
         page_number=page_number,
         width=width,
         height=height,
         dpi=dpi,
         max_pages=max_pages,
         page_range=page_range,
-        output_format=output_format,
+        output_format=",".join(output_formats),
+        mode=normalized_mode,
+        paginate=paginate,
+        add_block_ids=add_block_ids,
+        include_markdown_in_chunks=include_markdown_in_chunks,
+        skip_cache=skip_cache,
+        extras=extras,
+        additional_config=additional_config,
     )
     return compat.submission_response(request_id)
 
@@ -302,6 +486,24 @@ def get_marker_result_check(request: Request, request_id: str) -> dict[str, Any]
         return compat.get_request_result(request_id)
     except KeyError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="request not found") from None
+
+
+@router.delete("/requests", response_class=JSONResponse)
+def cleanup_requests(
+    request: Request,
+    older_than_hours: float = Query(default=24.0),
+    status_filter: str | None = Query(default=None),
+    dry_run: bool = Query(default=True),
+) -> dict[str, Any]:
+    compat = _get_compat_service(request)
+    try:
+        return compat.cleanup_requests(
+            older_than_hours=older_than_hours,
+            status_filter=status_filter,
+            dry_run=dry_run,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
 
 
 @router.get("/thumbnails/{lookup_key}", response_class=JSONResponse)
@@ -899,13 +1101,14 @@ def create_app() -> FastAPI:
         yield
 
     app = FastAPI(
-        title="a-cong OCR Service",
+        title="army-ocr Service",
         version="0.1.0",
         root_path=settings.normalized_root_path,
         lifespan=lifespan,
     )
     app.include_router(router)
     app.include_router(compat_router)
+    app.include_router(playground_router)
     return app
 
 

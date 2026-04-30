@@ -10,6 +10,7 @@ import httpx
 
 from app.core.config import Settings, get_settings
 from app.domain.types import ArticleCandidate
+from app.services.runtime_config import runtime_config_value
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,10 +37,11 @@ class PageRelevanceResult:
 class NationalAssemblyRelevanceScorer:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
-        self.base_url = self._normalize_base_url(self.settings.llm_base_url)
-        self.model_name = self._clean_text(self.settings.llm_model or "gpt-oss-20b") or "gpt-oss-20b"
         self.api_key = self._clean_text(self.settings.llm_api_key)
-        self.timeout_sec = max(float(self.settings.llm_timeout_sec or 0.0), 5.0)
+        self.base_url = ""
+        self.model_name = "gpt-oss-20b"
+        self.timeout_sec = 20.0
+        self._refresh_runtime_settings()
 
     def score_page_articles(
         self,
@@ -51,6 +53,7 @@ class NationalAssemblyRelevanceScorer:
         if not articles:
             return PageRelevanceResult(assessments={}, source="none", model=None)
 
+        self._refresh_runtime_settings()
         prepared = [self._prepare_article(idx, article) for idx, article in enumerate(articles, start=1)]
         if not self.base_url:
             assessments = {item["article_order"]: self._heuristic_assessment(item) for item in prepared}
@@ -81,6 +84,17 @@ class NationalAssemblyRelevanceScorer:
             source = "heuristic"
         model = self.model_name if llm_used else None
         return PageRelevanceResult(assessments=assessments, source=source, model=model)
+
+    def _refresh_runtime_settings(self) -> None:
+        base_url = runtime_config_value("llm_base_url", self.settings.llm_base_url or "", self.settings)
+        model_name = runtime_config_value("llm_model", self.settings.llm_model or "gpt-oss-20b", self.settings)
+        timeout_sec = runtime_config_value("llm_timeout_sec", self.settings.llm_timeout_sec or 20.0, self.settings)
+        self.base_url = self._normalize_base_url(str(base_url or ""))
+        self.model_name = self._clean_text(str(model_name or "gpt-oss-20b")) or "gpt-oss-20b"
+        try:
+            self.timeout_sec = max(float(timeout_sec or 0.0), 5.0)
+        except (TypeError, ValueError):
+            self.timeout_sec = max(float(self.settings.llm_timeout_sec or 20.0), 5.0)
 
     def _call_llm(
         self,

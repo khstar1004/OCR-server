@@ -18,6 +18,9 @@ from app.repos.interfaces import ArticleRepository, JobRepository
 
 
 class JobsPort(Protocol):
+    def register_source_file(self, source_path: Path, file_hash: str, file_size: int) -> JobRegistrationResult:
+        ...
+
     def register_pdf(self, source_path: Path, file_hash: str, file_size: int) -> JobRegistrationResult:
         ...
 
@@ -68,7 +71,7 @@ class JobsService:
         self._job_repository = job_repository
         self._article_repository = article_repository
 
-    def register_pdf(self, source_path: Path, file_hash: str, file_size: int) -> JobRegistrationResult:
+    def register_source_file(self, source_path: Path, file_hash: str, file_size: int) -> JobRegistrationResult:
         resolved_path = str(source_path.resolve())
         existing = self._job_repository.get_by_source_hash(resolved_path, file_hash)
         if existing is not None:
@@ -91,6 +94,9 @@ class JobsService:
             return JobRegistrationResult(job=existing, created=False)
 
         return JobRegistrationResult(job=created, created=True)
+
+    def register_pdf(self, source_path: Path, file_hash: str, file_size: int) -> JobRegistrationResult:
+        return self.register_source_file(source_path, file_hash, file_size)
 
     def list_jobs(self) -> list[JobRecord]:
         return self._job_repository.list()

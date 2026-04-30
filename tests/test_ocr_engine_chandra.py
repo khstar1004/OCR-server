@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import importlib
+import json
 import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from PIL import Image
@@ -107,6 +111,116 @@ def test_chandra_engine_builds_vllm_config_and_runner(tmp_path: Path, monkeypatc
     assert config.model_id == "chandra-ocr-2"
     assert config.vllm_api_base == "http://vllm-ocr:8000/v1"
     assert runner.__class__.__name__ == "ChandraVLLMRunner"
+
+
+def test_chandra_engine_uses_runtime_config_overrides(tmp_path: Path, monkeypatch) -> None:
+    runtime_path = tmp_path / "runtime" / "settings.json"
+    runtime_path.parent.mkdir(parents=True)
+    runtime_path.write_text(
+        json.dumps(
+            {
+                "values": {
+                    "chandra_prompt_type": "ocr_layout_runtime",
+                    "chandra_batch_size": 3,
+                    "ocr_service_url": "http://runtime-ocr:8000",
+                    "ocr_service_mode": "datalab_marker",
+                    "vllm_api_base": "http://runtime-vllm:8000/v1",
+                    "vllm_model_name": "runtime-model",
+                    "vllm_max_retries": 2,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("RUNTIME_CONFIG_PATH", str(runtime_path))
+    monkeypatch.setenv("OCR_BACKEND", "chandra")
+    monkeypatch.setenv("OCR_SERVICE_URL", "")
+    monkeypatch.setenv("CHANDRA_METHOD", "vllm")
+    monkeypatch.setenv("CHANDRA_MODEL_ID", "datalab-to/chandra-ocr-2")
+    monkeypatch.setenv("CHANDRA_MODEL_DIR", "")
+    monkeypatch.setenv("VLLM_API_BASE", "http://vllm-ocr:8000/v1")
+    monkeypatch.setenv("VLLM_MODEL_NAME", "chandra-ocr-2")
+    monkeypatch.setenv("INPUT_ROOT", str((tmp_path / "input").resolve()))
+    monkeypatch.setenv("OUTPUT_ROOT", str((tmp_path / "output").resolve()))
+    monkeypatch.setenv("MODELS_ROOT", str((tmp_path / "models").resolve()))
+
+    _reset_app_modules()
+    engine_module = importlib.import_module("app.services.ocr_engine")
+
+    engine = engine_module.OCREngine()
+    config = engine._build_chandra_config()
+
+    assert config.model_id == "runtime-model"
+    assert config.prompt_type == "ocr_layout_runtime"
+    assert config.batch_size == 3
+    assert config.vllm_api_base == "http://runtime-vllm:8000/v1"
+    assert config.vllm_max_retries == 2
+    assert engine._should_use_remote_service() is True
+    assert engine._remote_service_mode() == "datalab_marker"
+    assert engine._resolve_ocr_service_url(service_kind="marker") == "http://runtime-ocr:8000/api/v1/marker"
+
+
+def test_chandra_engine_serializes_concurrent_inference(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("OCR_BACKEND", "chandra")
+    monkeypatch.setenv("OCR_SERVICE_URL", "")
+    monkeypatch.setenv("OCR_RETRY_LOW_QUALITY", "false")
+    monkeypatch.setenv("OCR_MAX_CONCURRENT_REQUESTS", "1")
+    monkeypatch.setenv("CHANDRA_MODEL_ID", "datalab-to/chandra-ocr-2")
+    monkeypatch.setenv("CHANDRA_MODEL_DIR", "")
+    monkeypatch.setenv("INPUT_ROOT", str((tmp_path / "input").resolve()))
+    monkeypatch.setenv("OUTPUT_ROOT", str((tmp_path / "output").resolve()))
+    monkeypatch.setenv("MODELS_ROOT", str((tmp_path / "models").resolve()))
+
+    _reset_app_modules()
+    engine_module = importlib.import_module("app.services.ocr_engine")
+
+    image_path = tmp_path / "page.png"
+    Image.new("RGB", (1000, 1400), color="white").save(image_path)
+
+    class SlowRunner:
+        def __init__(self):
+            self.active = 0
+            self.max_active = 0
+            self.lock = threading.Lock()
+
+        def __call__(self, pages):
+            assert len(pages) == 1
+            with self.lock:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+            try:
+                time.sleep(0.05)
+                return [
+                    {
+                        "json": {
+                            "blocks": [
+                                {
+                                    "id": f"title-{pages[0].page_no}",
+                                    "type": "headline",
+                                    "bbox": [40, 40, 520, 120],
+                                    "text": f"국방 뉴스 {pages[0].page_no}",
+                                }
+                            ]
+                        }
+                    }
+                ]
+            finally:
+                with self.lock:
+                    self.active -= 1
+
+    engine = engine_module.OCREngine()
+    runner = SlowRunner()
+    monkeypatch.setattr(engine, "_get_chandra_runner", lambda config: runner)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(engine.parse_page, image_path, page_number, 1000, 1400)
+            for page_number in (1, 2)
+        ]
+        layouts = [future.result(timeout=5) for future in futures]
+
+    assert [layout.page_number for layout in layouts] == [1, 2]
+    assert runner.max_active == 1
 
 
 def test_normalize_chandra_page_output_extracts_structured_blocks_from_markdown(tmp_path: Path) -> None:

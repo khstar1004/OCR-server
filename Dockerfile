@@ -5,6 +5,8 @@ ARG TORCH_PACKAGES="torch==2.6.0+cu124 torchvision==0.21.0+cu124"
 ARG CHANDRA_MODEL_ID=datalab-to/chandra-ocr-2
 ARG CHANDRA_MODEL_DIR=/models/chandra-ocr-2
 ARG PRELOAD_CHANDRA=false
+ARG ACONG_BUILD_VERSION=local
+ARG ACONG_BUILD_DATE=unknown
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -31,6 +33,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
     CHANDRA_DTYPE=bfloat16 \
     HF_HOME=/opt/model-cache/huggingface \
     HF_HUB_DISABLE_TELEMETRY=1
+
+LABEL org.opencontainers.image.title="army-ocr App" \
+      org.opencontainers.image.description="army-ocr application image for closed-network carry-in" \
+      org.opencontainers.image.version="${ACONG_BUILD_VERSION}" \
+      org.opencontainers.image.created="${ACONG_BUILD_DATE}"
 
 WORKDIR /app
 

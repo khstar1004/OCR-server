@@ -11,6 +11,14 @@ class JobRunDailyRequest(BaseModel):
     date: date_type | None = Field(default=None)
     callback_url: str | None = Field(default=None)
     force_reprocess: bool = Field(default=False)
+    ocr_mode: str = Field(default="balanced")
+    page_range: str | None = Field(default=None)
+    max_pages: int | None = Field(default=None)
+    output_format: str = Field(default="markdown")
+    paginate: bool = Field(default=False)
+    add_block_ids: bool = Field(default=False)
+    include_markdown_in_chunks: bool = Field(default=False)
+    skip_cache: bool = Field(default=False)
 
 
 class JobCreatedResponse(BaseModel):
@@ -53,6 +61,19 @@ class ArticleSourceMetadataResponse(BaseModel):
     issue_bbox: list[int] | None = None
 
 
+class OcrQualityResponse(BaseModel):
+    status: str
+    score: float
+    char_count: int = 0
+    korean_ratio: float = 0.0
+    average_confidence: float = 0.0
+    block_count: int = 0
+    image_count: int = 0
+    article_count: int = 0
+    needs_review: bool = False
+    reasons: list[str] = Field(default_factory=list)
+
+
 class ArticleResponse(BaseModel):
     article_id: int
     page_number: int
@@ -73,6 +94,12 @@ class ArticleResponse(BaseModel):
     relevance_model: str | None = None
     relevance_source: str | None = None
     source_metadata: ArticleSourceMetadataResponse | None = None
+    ocr_quality: OcrQualityResponse | None = None
+    delivery_status: str | None = None
+    delivery_response_code: int | None = None
+    delivery_last_error: str | None = None
+    delivery_updated_at: str | None = None
+    delivery_request_available: bool = False
     images: list[ArticleImageResponse]
     bundle_dir: str | None = None
     markdown_path: str | None = None
@@ -91,6 +118,69 @@ class JobResultResponse(BaseModel):
     files: list[FileResultResponse]
 
 
+class NewsPayloadImageCheckResponse(BaseModel):
+    image_id: int
+    image_path: str | None = None
+    src: str | None = None
+    included: bool
+    reason: str | None = None
+    size_bytes: int | None = None
+    caption: str = ""
+
+
+class NewsPayloadArticleResponse(BaseModel):
+    article_id: int
+    page_number: int
+    article_order: int
+    validation_status: str = "unknown"
+    validation_reasons: list[str] = Field(default_factory=list)
+    title: str
+    body_text_length: int
+    relevance_score: float
+    publication: str
+    issue_date: str
+    included_image_count: int
+    skipped_image_count: int
+    images: list[NewsPayloadImageCheckResponse] = Field(default_factory=list)
+    request_article: dict
+
+
+class JobNewsPayloadResponse(BaseModel):
+    job_id: str
+    status: str
+    target_url: str | None = None
+    target_configured: bool
+    delivery_status: str = "unknown"
+    ready_count: int = 0
+    warning_count: int = 0
+    blocked_count: int = 0
+    validation_summary: list[str] = Field(default_factory=list)
+    article_count: int
+    included_image_count: int
+    skipped_image_count: int
+    articles: list[NewsPayloadArticleResponse]
+    body: list[dict]
+
+
+class JobDeliveryRunResponse(BaseModel):
+    job_id: str
+    target_url: str
+    delivered: int
+    failed: int
+    skipped: int = 0
+
+
+class JobQualityResponse(BaseModel):
+    status: str = "unknown"
+    average_score: float | None = None
+    ready_pages: int = 0
+    warning_pages: int = 0
+    blocked_pages: int = 0
+    review_pages: int = 0
+    measured_pages: int = 0
+    top_reasons: list[str] = Field(default_factory=list)
+
+
 class JobStageResponse(BaseModel):
     stage_key: str
     label: str
@@ -104,6 +194,9 @@ class PageProgressResponse(BaseModel):
     page_number: int
     status: str
     article_count: int = 0
+    quality_status: str | None = None
+    quality_score: float | None = None
+    quality_reasons: list[str] = Field(default_factory=list)
 
 
 class PdfProgressResponse(BaseModel):
@@ -142,6 +235,7 @@ class JobDetailResponse(BaseModel):
     failed_pdfs: int = 0
     total_articles: int = 0
     progress_percent: float = 0.0
+    quality: JobQualityResponse | None = None
     stages: list[JobStageResponse]
     pdf_files: list[PdfProgressResponse]
     recent_logs: list[ProcessingLogEntryResponse]

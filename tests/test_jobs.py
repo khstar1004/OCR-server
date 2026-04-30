@@ -106,11 +106,14 @@ def test_app_boots_with_empty_database_and_serves_lookup_apis(tmp_path: Path) ->
     with TestClient(app) as client:
         health = client.get("/healthz")
         runtime_health = client.get("/api/v1/health")
+        readiness = client.get("/api/v1/ready")
         jobs = client.get("/api/jobs")
         articles = client.get("/api/articles")
 
     assert health.status_code == 200
     assert runtime_health.status_code == 200
+    assert readiness.status_code == 200
+    assert "checks" in readiness.json()
     assert jobs.status_code == 200
     assert articles.status_code == 200
     assert settings.data_dir.exists()

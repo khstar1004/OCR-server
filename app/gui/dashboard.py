@@ -43,6 +43,14 @@ STATUS_COLORS = {
     "parsed": "#11835B",
 }
 
+SUPPORTED_SINGLE_FILE_SUFFIXES = {
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+}
+
 
 class ApiClient:
     def __init__(self, base_url: str):
@@ -57,12 +65,16 @@ class ApiClient:
             payload["source_dir"] = source_dir.strip()
         return self._request("POST", "jobs/run-daily", json=payload)
 
-    def start_single_file(self, pdf_path: str) -> dict[str, Any]:
-        target = Path(pdf_path).expanduser()
+    def start_single_file(self, source_path: str) -> dict[str, Any]:
+        target = Path(source_path).expanduser()
         if not target.exists():
-            raise FileNotFoundError(f"PDF file not found: {target}")
+            raise FileNotFoundError(f"source file not found: {target}")
         if not target.is_file():
-            raise FileNotFoundError(f"PDF file not found: {target}")
+            raise FileNotFoundError(f"source file not found: {target}")
+        content_type = SUPPORTED_SINGLE_FILE_SUFFIXES.get(target.suffix.lower())
+        if content_type is None:
+            allowed = ", ".join(sorted(SUPPORTED_SINGLE_FILE_SUFFIXES))
+            raise ValueError(f"unsupported source file type: {target.suffix or target.name}; allowed: {allowed}")
 
         def iter_file() -> Any:
             with target.open("rb") as handle:
@@ -77,7 +89,7 @@ class ApiClient:
                 "POST",
                 self.resolve_url("jobs/run-single"),
                 params={"file_name": target.name, "force_reprocess": True},
-                headers={"Content-Type": "application/pdf"},
+                headers={"Content-Type": content_type},
                 content=iter_file(),
             )
             response.raise_for_status()
@@ -237,7 +249,7 @@ class OverlayPreviewWidget(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("A-Congress OCR Viewer")
+        self.setWindowTitle("army-ocr Viewer")
         self.resize(1440, 840)
 
         self.thread_pool = QThreadPool.globalInstance()
@@ -283,11 +295,11 @@ class MainWindow(QMainWindow):
         browse_button = QPushButton("폴더")
         browse_button.clicked.connect(self.browse_source_dir)
         row1.addWidget(browse_button)
-        row1.addWidget(QLabel("PDF"))
+        row1.addWidget(QLabel("File"))
         self.source_file_input = QLineEdit()
-        self.source_file_input.setPlaceholderText("PDF 한 개만 선택해서 처리")
+        self.source_file_input.setPlaceholderText("PDF 또는 이미지 한 개 처리")
         row1.addWidget(self.source_file_input, 3)
-        browse_file_button = QPushButton("PDF")
+        browse_file_button = QPushButton("파일")
         browse_file_button.clicked.connect(self.browse_source_file)
         row1.addWidget(browse_file_button)
         start_button = QPushButton("작업 시작")
@@ -332,7 +344,7 @@ class MainWindow(QMainWindow):
         root.addWidget(main_splitter, 1)
 
         self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(["PDF / Page", "상태"])
+        self.tree.setHeaderLabels(["File / Page", "상태"])
         self.tree.itemSelectionChanged.connect(self.on_tree_selected)
         main_splitter.addWidget(self.tree)
 
@@ -435,7 +447,12 @@ class MainWindow(QMainWindow):
             self.source_file_input.clear()
 
     def browse_source_file(self) -> None:
-        selected_file, _ = QFileDialog.getOpenFileName(self, "OCR 입력 PDF 선택", "", "PDF Files (*.pdf)")
+        selected_file, _ = QFileDialog.getOpenFileName(
+            self,
+            "OCR 입력 파일 선택",
+            "",
+            "Input Files (*.pdf *.png *.jpg *.jpeg *.webp);;PDF Files (*.pdf);;Image Files (*.png *.jpg *.jpeg *.webp)",
+        )
         if selected_file:
             self.source_file_input.setText(selected_file)
             self.source_dir_input.clear()
@@ -525,7 +542,7 @@ class MainWindow(QMainWindow):
         else:
             self.status_label.setText(
                 f"Job {detail.get('job_id')} | {detail.get('status')} | "
-                f"PDF {detail.get('processed_pdfs', 0)}/{detail.get('total_pdfs', 0)} | "
+                f"Files {detail.get('processed_pdfs', 0)}/{detail.get('total_pdfs', 0)} | "
                 f"Articles {detail.get('total_articles', 0)}"
             )
         self._fill_tree(detail.get("pdf_files", []))
@@ -603,7 +620,7 @@ class MainWindow(QMainWindow):
             if skipped:
                 self.extracted_text.setPlainText(
                     "이번 작업은 duplicate_hash 때문에 스킵되었습니다.\n"
-                    "같은 PDF를 다시 보고 싶으면 GUI에서 새 작업을 시작하면 강제 재처리로 다시 수행됩니다.\n\n"
+                    "같은 파일을 다시 보고 싶으면 GUI에서 새 작업을 시작하면 강제 재처리로 다시 수행됩니다.\n\n"
                     f"Skipped files: {', '.join(str(name) for name in skipped)}"
                 )
             else:
@@ -891,7 +908,7 @@ class MainWindow(QMainWindow):
         hint = message
         lowered = message.lower()
         if "404" in lowered and "/run-single" in lowered:
-            hint = "단일 PDF 업로드 API가 없는 예전 컨테이너입니다. `docker compose up --build` 또는 API 재시작 후 다시 시도하세요."
+            hint = "단일 파일 업로드 API가 없는 예전 컨테이너입니다. `docker compose up --build` 또는 API 재시작 후 다시 시도하세요."
         self.statusBar().showMessage(hint, 6000)
         QMessageBox.warning(self, "OCR Viewer", hint)
 
@@ -910,7 +927,7 @@ class MainWindow(QMainWindow):
 
 def main() -> int:
     app = QApplication(sys.argv)
-    app.setApplicationName("A-Congress OCR Viewer")
+    app.setApplicationName("army-ocr Viewer")
     window = MainWindow()
     window.show()
     return app.exec()

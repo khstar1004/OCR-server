@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import base64
 import html
+import shutil
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import unquote, urlparse
 from uuid import uuid4
 
@@ -19,6 +21,10 @@ from app.ocr.rendering import render_pdf_document
 from app.services.article_cluster import ArticleClusterer
 from app.services.artifacts import build_job_artifact_layout, load_json, slugify, write_json
 from app.services.ocr_engine import OCREngine
+from app.services.runtime_config import runtime_config_value
+
+MARKER_OUTPUT_FORMATS = {"json", "markdown", "html", "chunks"}
+MARKER_MODES = {"fast", "balanced", "accurate"}
 
 
 def utcnow_iso() -> str:
@@ -64,6 +70,30 @@ def parse_page_range(page_range: str | None) -> set[int] | None:
     return values
 
 
+def normalize_marker_output_formats(output_format: str | None) -> list[str]:
+    raw_value = (output_format or "").strip().lower()
+    if not raw_value:
+        return ["markdown"]
+    formats: list[str] = []
+    for item in raw_value.split(","):
+        value = item.strip().lower()
+        if not value:
+            continue
+        if value not in MARKER_OUTPUT_FORMATS:
+            allowed = ", ".join(sorted(MARKER_OUTPUT_FORMATS))
+            raise ValueError(f"output_format must contain only: {allowed}")
+        if value not in formats:
+            formats.append(value)
+    return formats or ["markdown"]
+
+
+def normalize_marker_mode(mode: str | None) -> str:
+    value = (mode or "balanced").strip().lower()
+    if value not in MARKER_MODES:
+        raise ValueError("mode must be one of: fast, balanced, accurate")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class ResolvedInputFile:
     source: str
@@ -91,7 +121,7 @@ class DatalabCompatService:
     def versions(self) -> dict[str, Any]:
         model_source = self.settings.chandra_model_dir or self.settings.chandra_model_id
         return {
-            "service": "a-cong-ocr",
+            "service": "army-ocr",
             "compat_mode": "datalab-like-v1",
             "ocr_backend": self.settings.ocr_backend,
             "chandra_model": str(model_source),
@@ -171,6 +201,42 @@ class DatalabCompatService:
             raise KeyError(f"request not found: {request_id}")
         return load_json(path)
 
+    def list_requests(
+        self,
+        *,
+        limit: int = 50,
+        playground_only: bool = False,
+        request_kind: str | None = None,
+    ) -> dict[str, Any]:
+        safe_limit = max(1, min(int(limit), 500))
+        items: list[dict[str, Any]] = []
+        for record_path in self.requests_dir.glob("*/record.json"):
+            try:
+                record = load_json(record_path)
+            except Exception:
+                continue
+            meta = record.get("meta") if isinstance(record.get("meta"), dict) else {}
+            if playground_only and meta.get("playground") is not True:
+                continue
+            if request_kind and str(record.get("request_kind") or "") != request_kind:
+                continue
+            items.append(self._request_history_item(record, fallback_request_id=record_path.parent.name))
+
+        items.sort(key=lambda item: float(item.get("_sort_timestamp") or 0.0), reverse=True)
+        visible_items = items[:safe_limit]
+        for item in visible_items:
+            item.pop("_sort_timestamp", None)
+        return {
+            "success": True,
+            "count": len(visible_items),
+            "total_count": len(items),
+            "limit": safe_limit,
+            "playground_only": playground_only,
+            "request_kind": request_kind,
+            "items": visible_items,
+            "versions": self.versions(),
+        }
+
     def process_ocr_request(
         self,
         request_id: str,
@@ -185,6 +251,8 @@ class DatalabCompatService:
         page_range: str | None = None,
     ) -> None:
         file_name = safe_filename(file_name, "document.bin")
+        started_at = utcnow_iso()
+        started_perf = time.perf_counter()
         try:
             pages, page_images = self._process_document_pages(
                 request_id=request_id,
@@ -196,6 +264,7 @@ class DatalabCompatService:
                 dpi=dpi,
                 max_pages=max_pages,
                 page_range=page_range,
+                page_callback=None,
             )
             result = {
                 "status": "complete",
@@ -207,6 +276,16 @@ class DatalabCompatService:
                 "cost_breakdown": {"credits": 0},
                 "versions": self.versions(),
             }
+            result["runtime"] = self._runtime_metadata(
+                request_id=request_id,
+                request_kind="ocr",
+                file_name=file_name,
+                file_size_bytes=len(file_bytes),
+                started_at=started_at,
+                started_perf=started_perf,
+                page_count=len(pages),
+                status="complete",
+            )
             self._update_request_record(
                 request_id,
                 status="complete",
@@ -215,6 +294,17 @@ class DatalabCompatService:
                 error=None,
             )
         except Exception as exc:
+            runtime = self._runtime_metadata(
+                request_id=request_id,
+                request_kind="ocr",
+                file_name=file_name,
+                file_size_bytes=len(file_bytes),
+                started_at=started_at,
+                started_perf=started_perf,
+                page_count=None,
+                status="failed",
+                error_code=self._classify_error(exc),
+            )
             self._update_request_record(
                 request_id,
                 status="failed",
@@ -228,6 +318,7 @@ class DatalabCompatService:
                     "total_cost": 0,
                     "cost_breakdown": {"credits": 0},
                     "versions": self.versions(),
+                    "runtime": runtime,
                 },
             )
 
@@ -243,10 +334,82 @@ class DatalabCompatService:
         dpi: int = 300,
         max_pages: int | None = None,
         page_range: str | None = None,
-        output_format: str = "json",
+        output_format: str = "markdown",
+        mode: str = "balanced",
+        paginate: bool = False,
+        add_block_ids: bool = False,
+        include_markdown_in_chunks: bool = False,
+        skip_cache: bool = False,
+        extras: str | None = None,
+        additional_config: str | None = None,
     ) -> None:
         file_name = safe_filename(file_name, "document.bin")
+        started_at = utcnow_iso()
+        started_perf = time.perf_counter()
         try:
+            output_formats = normalize_marker_output_formats(output_format)
+            normalized_mode = normalize_marker_mode(mode)
+
+            progress_pages: list[PageLayout] = []
+            progress_page_images: list[Path] = []
+
+            def update_page_progress(page: PageLayout, page_image: Path, total_pages: int) -> None:
+                progress_pages.append(page)
+                progress_page_images.append(page_image)
+                processed_count = len(progress_pages)
+                partial_result = self._build_marker_result(
+                    request_id,
+                    file_name,
+                    progress_pages,
+                    output_formats=output_formats,
+                    mode=normalized_mode,
+                    max_pages=max_pages,
+                    page_range=page_range,
+                    paginate=paginate,
+                    add_block_ids=add_block_ids,
+                    include_markdown_in_chunks=include_markdown_in_chunks,
+                    skip_cache=skip_cache,
+                    extras=extras,
+                    additional_config=additional_config,
+                )
+                progress = self._progress_metadata(
+                    processed_pages=processed_count,
+                    total_pages=total_pages,
+                    status="processing",
+                )
+                partial_result["status"] = "processing"
+                partial_result["success"] = None
+                partial_result["page_count"] = total_pages
+                partial_result["processed_page_count"] = processed_count
+                partial_result["progress"] = progress
+                partial_result["runtime"] = self._runtime_metadata(
+                    request_id=request_id,
+                    request_kind="marker",
+                    file_name=file_name,
+                    file_size_bytes=len(file_bytes),
+                    started_at=started_at,
+                    started_perf=started_perf,
+                    page_count=total_pages,
+                    status="processing",
+                )
+                partial_result["metadata"].update(
+                    {
+                        "processed_page_count": processed_count,
+                        "total_page_count": total_pages,
+                        "processing_complete": False,
+                    }
+                )
+                partial_result["json"]["page_count"] = total_pages
+                if isinstance(partial_result.get("result"), dict) and isinstance(partial_result["result"].get("json"), dict):
+                    partial_result["result"]["json"]["page_count"] = total_pages
+                self._update_request_record(
+                    request_id,
+                    status="processing",
+                    page_image_paths=[str(path) for path in progress_page_images],
+                    result=partial_result,
+                    error=None,
+                )
+
             pages, page_images = self._process_document_pages(
                 request_id=request_id,
                 file_bytes=file_bytes,
@@ -257,8 +420,46 @@ class DatalabCompatService:
                 dpi=dpi,
                 max_pages=max_pages,
                 page_range=page_range,
+                page_callback=update_page_progress,
             )
-            result = self._build_marker_result(request_id, file_name, pages, output_format=output_format)
+            result = self._build_marker_result(
+                request_id,
+                file_name,
+                pages,
+                output_formats=output_formats,
+                mode=normalized_mode,
+                max_pages=max_pages,
+                page_range=page_range,
+                paginate=paginate,
+                add_block_ids=add_block_ids,
+                include_markdown_in_chunks=include_markdown_in_chunks,
+                skip_cache=skip_cache,
+                extras=extras,
+                additional_config=additional_config,
+            )
+            result["runtime"] = self._runtime_metadata(
+                request_id=request_id,
+                request_kind="marker",
+                file_name=file_name,
+                file_size_bytes=len(file_bytes),
+                started_at=started_at,
+                started_perf=started_perf,
+                page_count=len(pages),
+                status="complete",
+            )
+            result["processed_page_count"] = len(pages)
+            result["progress"] = self._progress_metadata(
+                processed_pages=len(pages),
+                total_pages=len(pages),
+                status="complete",
+            )
+            result["metadata"].update(
+                {
+                    "processed_page_count": len(pages),
+                    "total_page_count": len(pages),
+                    "processing_complete": True,
+                }
+            )
             self._update_request_record(
                 request_id,
                 status="complete",
@@ -267,6 +468,17 @@ class DatalabCompatService:
                 error=None,
             )
         except Exception as exc:
+            runtime = self._runtime_metadata(
+                request_id=request_id,
+                request_kind="marker",
+                file_name=file_name,
+                file_size_bytes=len(file_bytes),
+                started_at=started_at,
+                started_perf=started_perf,
+                page_count=None,
+                status="failed",
+                error_code=self._classify_error(exc),
+            )
             self._update_request_record(
                 request_id,
                 status="failed",
@@ -281,8 +493,106 @@ class DatalabCompatService:
                     "json": None,
                     "chunks": None,
                     "versions": self.versions(),
+                    "runtime": runtime,
                 },
             )
+
+    def cleanup_requests(self, *, older_than_hours: float = 24.0, status_filter: str | None = None, dry_run: bool = True) -> dict[str, Any]:
+        if older_than_hours <= 0:
+            raise ValueError("older_than_hours must be positive")
+        cutoff_timestamp = time.time() - (older_than_hours * 3600)
+        deleted: list[str] = []
+        candidates: list[str] = []
+        for record_path in self.requests_dir.glob("*/record.json"):
+            try:
+                record = load_json(record_path)
+                updated_at = str(record.get("updated_at") or record.get("created_at") or "")
+                updated_ts = datetime.fromisoformat(updated_at.replace("Z", "+00:00")).timestamp()
+            except Exception:
+                continue
+            if updated_ts > cutoff_timestamp:
+                continue
+            if status_filter and str(record.get("status") or "") != status_filter:
+                continue
+            request_id = str(record.get("request_id") or record_path.parent.name)
+            candidates.append(request_id)
+            if not dry_run:
+                shutil.rmtree(record_path.parent, ignore_errors=True)
+                deleted.append(request_id)
+        return {
+            "success": True,
+            "dry_run": dry_run,
+            "older_than_hours": older_than_hours,
+            "status_filter": status_filter,
+            "candidate_count": len(candidates),
+            "deleted_count": len(deleted),
+            "request_ids": candidates if dry_run else deleted,
+        }
+
+    @classmethod
+    def _request_history_item(cls, record: dict[str, Any], *, fallback_request_id: str) -> dict[str, Any]:
+        meta = record.get("meta") if isinstance(record.get("meta"), dict) else {}
+        result = record.get("result") if isinstance(record.get("result"), dict) else {}
+        metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+        runtime = result.get("runtime") if isinstance(result.get("runtime"), dict) else {}
+        progress = result.get("progress") if isinstance(result.get("progress"), dict) else {}
+        request_id = str(record.get("request_id") or fallback_request_id)
+        status_value = str(result.get("status") or record.get("status") or "processing")
+        created_at = str(record.get("created_at") or "")
+        updated_at = str(record.get("updated_at") or created_at)
+        page_count = cls._first_non_empty(
+            result.get("page_count"),
+            metadata.get("total_page_count"),
+            runtime.get("page_count"),
+        )
+        processed_page_count = cls._first_non_empty(
+            result.get("processed_page_count"),
+            metadata.get("processed_page_count"),
+            progress.get("processed_pages"),
+        )
+        file_name = str(
+            cls._first_non_empty(
+                meta.get("file_name"),
+                metadata.get("source_file"),
+                runtime.get("file_name"),
+                "",
+            )
+            or ""
+        )
+        return {
+            "request_id": request_id,
+            "request_kind": str(record.get("request_kind") or ""),
+            "status": status_value,
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "file_name": file_name,
+            "input_source": str(meta.get("input_source") or ""),
+            "mode": str(metadata.get("mode") or meta.get("mode") or ""),
+            "output_format": str(result.get("output_format") or meta.get("output_format") or ""),
+            "page_count": page_count,
+            "processed_page_count": processed_page_count,
+            "progress": progress,
+            "parse_quality_score": result.get("parse_quality_score") or metadata.get("parse_quality_score"),
+            "duration_ms": runtime.get("duration_ms"),
+            "error": result.get("error") or record.get("error"),
+            "_sort_timestamp": cls._history_timestamp(updated_at or created_at),
+        }
+
+    @staticmethod
+    def _first_non_empty(*values: Any) -> Any:
+        for value in values:
+            if value not in (None, ""):
+                return value
+        return None
+
+    @staticmethod
+    def _history_timestamp(value: str) -> float:
+        if not value:
+            return 0.0
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return 0.0
 
     def thumbnails(self, lookup_key: str, *, thumb_width: int = 300, page_range: str | None = None) -> dict[str, Any]:
         if thumb_width <= 0:
@@ -535,13 +845,20 @@ class DatalabCompatService:
             return path.read_bytes(), path.name
 
         if lowered.startswith(("http://", "https://")):
-            timeout = self.settings.ocr_service_timeout_sec
+            timeout = float(runtime_config_value("ocr_service_timeout_sec", self.settings.ocr_service_timeout_sec, self.settings))
             response = httpx.get(source, timeout=timeout)
             response.raise_for_status()
             file_name = safe_filename(Path(urlparse(source).path).name, "downloaded.bin")
             return response.content, file_name
 
         raise ValueError(f"unsupported file source: {source}")
+
+    def resolve_input_file_url(self, source: str) -> ResolvedInputFile:
+        cleaned = str(source or "").strip()
+        if not cleaned:
+            raise ValueError("file_url is required")
+        content, file_name = self._read_input_source(cleaned)
+        return ResolvedInputFile(source=cleaned, file_name=file_name, content=content)
 
     def _process_document_pages(
         self,
@@ -555,6 +872,7 @@ class DatalabCompatService:
         dpi: int = 300,
         max_pages: int | None = None,
         page_range: str | None = None,
+        page_callback: Callable[[PageLayout, Path, int], None] | None = None,
     ) -> tuple[list[PageLayout], list[Path]]:
         if max_pages is not None and max_pages <= 0:
             raise ValueError("max_pages must be greater than zero")
@@ -570,15 +888,18 @@ class DatalabCompatService:
             layout.ensure()
             rendered = render_pdf_document(input_path, layout, dpi=dpi)
             selected = self._select_rendered_pages(rendered.pages, max_pages=max_pages, page_range=page_range)
-            pages = [
-                self.engine.parse_page(
+            pages: list[PageLayout] = []
+            total_pages = len(selected)
+            for page in selected:
+                parsed_page = self.engine.parse_page(
                     image_path=page.image_path,
                     page_number=page.page_no,
                     width=page.width,
                     height=page.height,
                 )
-                for page in selected
-            ]
+                pages.append(parsed_page)
+                if page_callback is not None:
+                    page_callback(parsed_page, page.image_path, total_pages)
             return pages, [page.image_path for page in selected]
 
         resolved_width, resolved_height = width, height
@@ -596,6 +917,8 @@ class DatalabCompatService:
             width=int(resolved_width),
             height=int(resolved_height),
         )
+        if page_callback is not None:
+            page_callback(page, input_path, 1)
         return [page], [input_path]
 
     @staticmethod
@@ -614,21 +937,31 @@ class DatalabCompatService:
         file_name: str,
         pages: list[PageLayout],
         *,
-        output_format: str,
+        output_formats: list[str],
+        mode: str,
+        max_pages: int | None,
+        page_range: str | None,
+        paginate: bool,
+        add_block_ids: bool,
+        include_markdown_in_chunks: bool,
+        skip_cache: bool,
+        extras: str | None,
+        additional_config: str | None,
     ) -> dict[str, Any]:
-        normalized_output_format = output_format.strip().lower()
-        if normalized_output_format not in {"json", "markdown", "html", "chunks"}:
-            raise ValueError("output_format must be one of: json, markdown, html, chunks")
-
         page_payloads: list[dict[str, Any]] = []
         markdown_chunks: list[str] = []
         html_pages: list[str] = []
         chunk_list: list[dict[str, Any]] = []
+        confidences: list[float] = []
 
         for page in pages:
             articles, unassigned = self.clusterer.cluster_page(page)
             article_payloads = [self._serialize_article(article) for article in articles]
-            block_payloads = [self._serialize_block(block) for block in page.blocks]
+            block_payloads = [
+                self._serialize_block(block, include_markdown=include_markdown_in_chunks)
+                for block in page.blocks
+            ]
+            confidences.extend(float(block.get("confidence") or 0.0) for block in block_payloads)
             chunk_list.extend(
                 {
                     "page_number": page.page_number,
@@ -657,7 +990,7 @@ class DatalabCompatService:
             }
             page_payloads.append(page_payload)
             markdown_chunks.append(self._page_markdown(page_payload))
-            html_pages.append(self._page_html(page_payload))
+            html_pages.append(self._page_html(page_payload, add_block_ids=add_block_ids))
 
         json_payload = {
             "request_id": request_id,
@@ -665,8 +998,22 @@ class DatalabCompatService:
             "page_count": len(page_payloads),
             "pages": page_payloads,
         }
-        markdown_payload = "\n\n".join(chunk for chunk in markdown_chunks if chunk.strip())
-        html_payload = "<html><body>" + "".join(html_pages) + "</body></html>"
+        markdown_payload = self._join_page_markdown(markdown_chunks, page_payloads, paginate=paginate)
+        html_payload = "<html><body>" + self._join_page_html(html_pages, page_payloads, paginate=paginate) + "</body></html>"
+        parse_quality_score = round(sum(confidences) / len(confidences), 4) if confidences else 0.0
+        normalized_output_format = ",".join(output_formats)
+        output_payloads = {
+            "json": json_payload,
+            "markdown": markdown_payload,
+            "html": html_payload,
+            "chunks": chunk_list,
+        }
+        result_payload: Any
+        if len(output_formats) == 1:
+            result_payload = output_payloads[output_formats[0]]
+        else:
+            result_payload = {name: output_payloads[name] for name in output_formats}
+        requested_extras = [value.strip() for value in str(extras or "").split(",") if value.strip()]
 
         result = {
             "status": "complete",
@@ -674,28 +1021,42 @@ class DatalabCompatService:
             "error": None,
             "page_count": len(page_payloads),
             "output_format": normalized_output_format,
+            "output_formats": output_formats,
             "markdown": markdown_payload,
             "html": html_payload,
             "json": json_payload,
             "chunks": chunk_list,
+            "parse_quality_score": parse_quality_score,
+            "metadata": {
+                "engine": "chandra",
+                "backend": self.settings.ocr_backend,
+                "compat_mode": "datalab-like-v1",
+                "datalab_compat": True,
+                "mode": mode,
+                "output_formats": output_formats,
+                "max_pages": max_pages,
+                "page_range": page_range,
+                "paginate": paginate,
+                "add_block_ids": add_block_ids,
+                "include_markdown_in_chunks": include_markdown_in_chunks,
+                "skip_cache": skip_cache,
+                "extras": requested_extras,
+                "additional_config": additional_config,
+                "source_file": file_name,
+                "processed_page_count": len(page_payloads),
+                "parse_quality_score": parse_quality_score,
+            },
             "checkpoint_id": request_id,
             "total_cost": 0,
             "cost_breakdown": {"credits": 0},
             "versions": self.versions(),
+            "result": result_payload,
         }
-        if normalized_output_format == "json":
-            result["result"] = json_payload
-        elif normalized_output_format == "markdown":
-            result["result"] = markdown_payload
-        elif normalized_output_format == "html":
-            result["result"] = html_payload
-        else:
-            result["result"] = chunk_list
         return result
 
     @staticmethod
-    def _serialize_block(block: OCRBlock) -> dict[str, Any]:
-        return {
+    def _serialize_block(block: OCRBlock, *, include_markdown: bool = False) -> dict[str, Any]:
+        payload = {
             "block_id": block.block_id,
             "page_number": block.page_number,
             "label": block.label.value,
@@ -704,6 +1065,9 @@ class DatalabCompatService:
             "confidence": float(block.confidence),
             "metadata": dict(block.metadata or {}),
         }
+        if include_markdown:
+            payload["markdown"] = DatalabCompatService._block_markdown(payload)
+        return payload
 
     def _serialize_ocr_page(self, page: PageLayout) -> dict[str, Any]:
         line_payloads = [
@@ -774,20 +1138,125 @@ class DatalabCompatService:
         return f"# Page {page_payload['page_number']}\n\n" + "\n\n".join(chunk for chunk in article_chunks if chunk.strip())
 
     @staticmethod
-    def _page_html(page_payload: dict[str, Any]) -> str:
+    def _block_markdown(block_payload: dict[str, Any]) -> str:
+        text = str(block_payload.get("text") or "").strip()
+        label = str(block_payload.get("label") or "").strip().lower()
+        if not text:
+            return ""
+        if label in {"title", "sectionheader"}:
+            return f"## {text}"
+        if label in {"caption", "pageheader", "pagefooter"}:
+            return f"*{text}*"
+        return text
+
+    @staticmethod
+    def _page_html(page_payload: dict[str, Any], *, add_block_ids: bool = False) -> str:
         parts = [f"<section data-page='{page_payload['page_number']}'>", f"<h2>Page {page_payload['page_number']}</h2>"]
-        for article in page_payload.get("articles", []):
-            title = html.escape(str(article.get("title") or ""))
-            body = html.escape(str(article.get("body_text") or "")).replace("\n", "<br/>")
-            if title:
-                parts.append(f"<h3>{title}</h3>")
-            if body:
-                parts.append(f"<p>{body}</p>")
+        for block in page_payload.get("blocks", []):
+            text = html.escape(str(block.get("text") or "")).replace("\n", "<br/>")
+            label = html.escape(str(block.get("label") or "text"))
+            block_id = html.escape(str(block.get("block_id") or ""))
+            block_attr = f" data-block-id='{block_id}'" if add_block_ids and block_id else ""
+            class_attr = f" class='block block-{label}'"
+            if label in {"title", "sectionheader"} and text:
+                parts.append(f"<h3{class_attr}{block_attr}>{text}</h3>")
+            elif label == "image":
+                parts.append(f"<figure{class_attr}{block_attr}></figure>")
+            elif text:
+                parts.append(f"<p{class_attr}{block_attr}>{text}</p>")
         if len(parts) == 2:
             fallback = html.escape(str(page_payload.get("text") or "")).replace("\n", "<br/>")
             parts.append(f"<p>{fallback}</p>")
         parts.append("</section>")
         return "".join(parts)
+
+    @staticmethod
+    def _join_page_markdown(chunks: list[str], page_payloads: list[dict[str, Any]], *, paginate: bool) -> str:
+        pairs = [
+            (page_payloads[index] if index < len(page_payloads) else {"page_number": index + 1}, chunk)
+            for index, chunk in enumerate(chunks)
+            if chunk.strip()
+        ]
+        if not paginate:
+            return "\n\n".join(chunk for _, chunk in pairs)
+        rendered: list[str] = []
+        for index, (page_payload, chunk) in enumerate(pairs):
+            if index:
+                page_number = page_payload.get("page_number")
+                rendered.append(f"{page_number}{'-' * 48}")
+            rendered.append(chunk)
+        return "\n\n".join(rendered)
+
+    @staticmethod
+    def _join_page_html(chunks: list[str], page_payloads: list[dict[str, Any]], *, paginate: bool) -> str:
+        pairs = [
+            (page_payloads[index] if index < len(page_payloads) else {"page_number": index + 1}, chunk)
+            for index, chunk in enumerate(chunks)
+            if chunk.strip()
+        ]
+        if not paginate:
+            return "".join(chunk for _, chunk in pairs)
+        rendered: list[str] = []
+        for index, (page_payload, chunk) in enumerate(pairs):
+            if index:
+                page_number = html.escape(str(page_payload.get("page_number")))
+                rendered.append(f"<hr data-page-break='{page_number}'/>")
+            rendered.append(chunk)
+        return "".join(rendered)
+
+    @staticmethod
+    def _runtime_metadata(
+        *,
+        request_id: str,
+        request_kind: str,
+        file_name: str,
+        file_size_bytes: int,
+        started_at: str,
+        started_perf: float,
+        page_count: int | None,
+        status: str,
+        error_code: str | None = None,
+    ) -> dict[str, Any]:
+        finished_at = utcnow_iso()
+        payload = {
+            "request_id": request_id,
+            "request_kind": request_kind,
+            "file_name": file_name,
+            "file_size_bytes": file_size_bytes,
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "duration_ms": round((time.perf_counter() - started_perf) * 1000, 2),
+            "page_count": page_count,
+            "status": status,
+        }
+        if error_code:
+            payload["error_code"] = error_code
+        return payload
+
+    @staticmethod
+    def _progress_metadata(*, processed_pages: int, total_pages: int, status: str) -> dict[str, Any]:
+        safe_total = max(int(total_pages or 0), 0)
+        safe_processed = max(int(processed_pages or 0), 0)
+        percent = 100.0 if safe_total == 0 and status == "complete" else 0.0
+        if safe_total > 0:
+            percent = round(min(safe_processed, safe_total) / safe_total * 100, 1)
+        return {
+            "status": status,
+            "processed_pages": safe_processed,
+            "total_pages": safe_total,
+            "percent": percent,
+        }
+
+    @staticmethod
+    def _classify_error(exc: Exception) -> str:
+        message = str(exc).lower()
+        if "pdf" in message:
+            return "invalid_pdf"
+        if "page_range" in message or "max_pages" in message or "page_number" in message:
+            return "invalid_request"
+        if "not found" in message:
+            return "input_not_found"
+        return "processing_failed"
 
     def _request_dir(self, request_id: str) -> Path:
         return self.requests_dir / request_id

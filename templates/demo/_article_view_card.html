@@ -8,21 +8,24 @@
 <article class="result-card page-article-card {% if is_selected_article %}is-selected{% endif %}">
   <div class="page-article-head">
     <div class="page-article-copy">
-      <div class="block-label">ARTICLE {{ "%02d"|format(detail_item.article_order) }}</div>
-      <h2>{{ detail_item.title|striptags or detail_item.corrected_title|striptags or "Untitled" }}</h2>
+      <div class="block-label">기사 {{ "%02d"|format(detail_item.article_order) }}</div>
+      <h2>{{ detail_item.title|striptags or detail_item.corrected_title|striptags or "제목 없음" }}</h2>
       {% if detail_item.corrected_title and detail_item.corrected_title != detail_item.title %}
       <p class="detail-subtitle">교정 제목: {{ detail_item.corrected_title|striptags }}</p>
       {% endif %}
-      <p class="detail-subtitle">{{ detail_item.pdf_file }} · page {{ detail_item.page_number }}</p>
+      <p class="detail-subtitle">{{ detail_item.pdf_file }} · {{ detail_item.page_number }}쪽</p>
     </div>
 
     <div class="page-article-meta">
       {% if is_selected_article %}
-      <span class="metric-pill">selected</span>
+      <span class="metric-pill">선택됨</span>
       {% endif %}
-      <span class="status-pill status-{{ detail_item.delivery_status }}">{{ detail_item.delivery_status }}</span>
+      <span class="status-pill status-{{ detail_item.delivery_status }}">{{ detail_item.delivery_status|ui_label }}</span>
       {% if detail_item.relevance_score is not none %}
-      <span class="metric-pill">score {{ "%.3f"|format(detail_item.relevance_score) }}</span>
+      <span class="metric-pill">점수 {{ "%.3f"|format(detail_item.relevance_score) }}</span>
+      {% endif %}
+      {% if detail_item.ocr_quality %}
+      <span class="status-pill status-{{ detail_item.ocr_quality.status }}">읽기 {{ "%.2f"|format(detail_item.ocr_quality.score) }}</span>
       {% endif %}
       {% if jobs_content_target and not is_selected_article %}
       <a
@@ -32,34 +35,52 @@
         hx-target="{{ jobs_content_target }}"
         hx-swap="outerHTML"
         hx-push-url="true"
-      >Focus</a>
+      >보기</a>
       {% endif %}
     </div>
   </div>
 
   {% if selected_view == "json" %}
   <div class="page-article-info">
-    <span>/news payload</span>
-    <span>{{ detail_item.delivery_request_source }}</span>
+    <span>전송값</span>
+    <span>{{ detail_item.delivery_request_source|ui_text }}</span>
     {% if detail_item.delivery_response_code %}
-    <span>HTTP {{ detail_item.delivery_response_code }}</span>
+    <span>응답 {{ detail_item.delivery_response_code }}</span>
     {% endif %}
   </div>
   <pre class="code-block json-view">{{ detail_item.delivery_request_text|e }}</pre>
   <div class="page-article-info">
-    <span>operator payload</span>
+    <span>작업값</span>
   </div>
   <pre class="code-block json-view">{{ detail_item.article_payload_text|e }}</pre>
+  {% elif selected_view == "compare" %}
+  <div class="compare-grid">
+    <section>
+      <div class="page-article-info"><span>원본 읽기</span></div>
+      <pre class="code-block compare-block">{{ detail_item.raw_ocr_text|e }}</pre>
+    </section>
+    <section>
+      <div class="page-article-info"><span>다듬은 글</span></div>
+      <pre class="code-block compare-block">{{ detail_item.corrected_text|e }}</pre>
+    </section>
+    <section>
+      <div class="page-article-info"><span>전송값</span></div>
+      <pre class="code-block compare-block">{{ detail_item.delivery_request_text|e }}</pre>
+    </section>
+  </div>
   {% elif selected_view == "markdown" %}
   <pre class="code-block">{{ detail_item.article_markdown_text|e }}</pre>
   {% else %}
   <div class="page-article-info">
-    <span>confidence {{ "%.3f"|format(detail_item.confidence) }}</span>
+    <span>신뢰도 {{ "%.3f"|format(detail_item.confidence) }}</span>
     {% if detail_item.article_bbox %}
-    <span>bbox {{ detail_item.article_bbox }}</span>
+    <span>위치 {{ detail_item.article_bbox }}</span>
     {% endif %}
     {% if detail_item.relevance_reason %}
     <span>{{ detail_item.relevance_reason }}</span>
+    {% endif %}
+    {% if detail_item.ocr_quality and detail_item.ocr_quality.reasons %}
+    <span>읽기 {% for reason in detail_item.ocr_quality.reasons %}{{ reason|ui_label }}{% if not loop.last %}, {% endif %}{% endfor %}</span>
     {% endif %}
   </div>
 
@@ -77,13 +98,13 @@
     <figure class="image-card image-card-large page-article-image-card">
       <img
         src="{{ url_path(image.image_url) }}"
-        alt="article image {{ image.image_id }}"
+        alt="기사 그림 {{ image.image_id }}"
         width="{{ image.width }}"
         height="{{ image.height }}"
         loading="lazy"
       >
       <figcaption>
-        <div>#{{ image.image_id }} · {{ image.width }}×{{ image.height }} · bbox {{ image.bbox }}</div>
+        <div>#{{ image.image_id }} · {{ image.width }}×{{ image.height }} · 위치 {{ image.bbox }}</div>
         {% for caption in image.captions %}
         <div class="image-caption-text">{{ caption.text }}</div>
         {% endfor %}

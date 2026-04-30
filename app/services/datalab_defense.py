@@ -19,7 +19,14 @@ from PIL import Image
 
 from app.core.config import Settings
 from app.services.artifacts import load_json, write_json
-from app.services.datalab_compat import DatalabCompatService, is_pdf_filename, safe_filename, utcnow_iso
+from app.services.datalab_compat import (
+    DatalabCompatService,
+    normalize_marker_mode,
+    normalize_marker_output_formats,
+    is_pdf_filename,
+    safe_filename,
+    utcnow_iso,
+)
 
 
 def _guess_content_type(file_name: str, default: str = "application/octet-stream") -> str:
@@ -840,7 +847,16 @@ class DefenseDataService:
             temp_request_id,
             file_record["file_name"],
             pages,
-            output_format=output_format,
+            output_formats=normalize_marker_output_formats(output_format),
+            mode=normalize_marker_mode(None),
+            max_pages=max_pages,
+            page_range=page_range,
+            paginate=False,
+            add_block_ids=False,
+            include_markdown_in_chunks=False,
+            skip_cache=False,
+            extras=None,
+            additional_config=None,
         )
         result["file_id"] = file_record["file_id"]
         result["document_id"] = document.get("document_id") if document else None

@@ -2,14 +2,25 @@
 
 {% block body %}
 <header class="hero demo-hero">
-  <div>
-    <p class="eyebrow">Operator Demo</p>
-    <h1>기사 제목, 본문, 이미지를 API처럼 정리해서 확인합니다.</h1>
-    <p class="hero-copy">OCR 결과를 렌더링해서 raw markdown 없이 읽기 쉬운 기사 카드로 보여줍니다.</p>
+  <div class="demo-brand">
+    <p class="eyebrow">문서 읽기</p>
+    <h1>작업 화면</h1>
+  </div>
+  <nav class="forge-stepper" aria-label="처리 단계">
+    <span class="is-active">읽기</span>
+    <span aria-hidden="true">→</span>
+    <span class="is-locked">나누기</span>
+    <span aria-hidden="true">→</span>
+    <span class="is-locked">정리</span>
+  </nav>
+  <div class="demo-top-actions">
+    <form method="post" action="{{ url_path('/demo/jobs/refresh-archive?view=' ~ selected_view) }}">
+      <button class="toolbar-button" type="submit">결과 복구</button>
+    </form>
+    <a class="toolbar-button" href="{{ url_path('/docs') }}" target="_blank" rel="noreferrer">연동 문서</a>
   </div>
   <div class="hero-meta">
-    <span>Recent jobs: {{ jobs|length }}</span>
-    <span>Route: <code>/demo/jobs</code></span>
+    <span>최근 작업 {{ jobs|length }}개</span>
     {% if jobs %}
     <label class="job-picker">
       <span>작업</span>
@@ -23,60 +34,172 @@
     </label>
     {% endif %}
     {% if selected_job_key %}
-    <form class="job-delete-form" method="post" action="{{ url_path('/demo/jobs/' ~ selected_job_key ~ '/delete?view=' ~ selected_view) }}" onsubmit="return confirm('이 작업을 삭제할까요?');">
-      <button class="toolbar-button toolbar-button--danger" type="submit">Delete Job</button>
+    <form class="job-delete-form" method="post" action="{{ url_path('/demo/jobs/' ~ selected_job_key ~ '/delete?view=' ~ selected_view) }}" onsubmit="return window.confirmJobDelete && window.confirmJobDelete();">
+      <button class="toolbar-button toolbar-button--danger" type="submit">작업 삭제</button>
     </form>
     {% endif %}
   </div>
 </header>
 
-<section class="panel launcher-panel">
+<section class="panel launcher-panel forge-config-panel">
   <div class="launcher-panel-head">
     <div>
-      <p class="panel-kicker">Run OCR</p>
-      <h2>명령어 없이 여기서 바로 작업을 시작합니다.</h2>
-      <p class="panel-subtitle">폴더 전체 처리와 단일 PDF 처리를 모두 지원합니다. 시작 후 자동으로 해당 job 화면으로 이동합니다.</p>
-      <p class="launcher-note">기사 전달 대상은 클라이언트 입력이 아니라 <code>.env</code>의 <code>TARGET_API_BASE_URL</code>를 사용합니다.</p>
+      <p class="panel-kicker">설정</p>
+      <h2>문서 읽기</h2>
     </div>
+    <details class="help-disclosure">
+      <summary>도움말</summary>
+      <div class="help-disclosure-body">
+        <p>폴더 전체 처리와 파일 한 개 처리를 지원합니다. 문서가 암호화되어 읽히지 않으면 쪽마다 그림으로 저장해서 넣을 수 있습니다.</p>
+        <p>국회 전송 대상은 화면에서 바꾸지 않고 서버 설정값을 사용합니다.</p>
+        <p>자세한 설정은 필요할 때만 펼쳐서 바꾸면 됩니다.</p>
+      </div>
+    </details>
   </div>
+
+  <div class="preset-strip" aria-label="간편 설정">
+    <button class="preset-button is-selected" type="button" data-preset="default">기본</button>
+    <button class="preset-button" type="button" data-preset="quick">빠른 확인</button>
+    <button class="preset-button" type="button" data-preset="accurate">정확히</button>
+    <button class="preset-button" type="button" data-preset="image">그림 입력</button>
+  </div>
+
+  <div class="mode-strip" aria-label="읽기 방식">
+    <label class="mode-card">
+      <input type="radio" name="launcher_ocr_mode" value="fast" data-launch-control="ocr_mode">
+      <span>빠르게<small>속도 우선</small></span>
+    </label>
+    <label class="mode-card is-selected">
+      <input type="radio" name="launcher_ocr_mode" value="balanced" data-launch-control="ocr_mode" checked>
+      <span>보통<small>기본값</small></span>
+    </label>
+    <label class="mode-card">
+      <input type="radio" name="launcher_ocr_mode" value="accurate" data-launch-control="ocr_mode">
+      <span>정확하게<small>품질 우선</small></span>
+    </label>
+  </div>
+
+  <div class="forge-option-row">
+    <label class="launcher-field">
+      <span>처리할 쪽</span>
+      <input type="text" value="" placeholder="0,2-4" data-launch-control="page_range">
+    </label>
+    <label class="launcher-field">
+      <span>최대 쪽수</span>
+      <input type="number" min="1" value="" placeholder="전체" data-launch-control="max_pages">
+    </label>
+    <label class="launcher-field">
+      <span>결과 모양</span>
+      <select data-launch-control="output_format">
+        <option value="markdown" selected>글만</option>
+        <option value="json,markdown">원본값과 글</option>
+        <option value="json,markdown,html,chunks">모두 저장</option>
+      </select>
+    </label>
+  </div>
+
+  <details class="help-disclosure launcher-extra-config">
+    <summary>자세한 설정</summary>
+    <div class="option-checkbox-grid">
+      <label><input type="checkbox" data-launch-control="skip_cache"> 임시 저장 무시</label>
+      <label><input type="checkbox" data-launch-control="paginate"> 쪽 나누기</label>
+      <label><input type="checkbox" data-launch-control="add_block_ids"> 블록 번호</label>
+      <label><input type="checkbox" data-launch-control="include_markdown_in_chunks"> 조각에 글 포함</label>
+    </div>
+  </details>
 
   <div class="launcher-grid">
     <form class="launcher-card" method="post" action="{{ url_path('/demo/jobs/start-dir') }}" enctype="multipart/form-data">
       <input type="hidden" name="view" value="{{ selected_view }}">
+      <input type="hidden" name="ocr_mode" value="balanced" data-launch-option="ocr_mode">
+      <input type="hidden" name="page_range" value="" data-launch-option="page_range">
+      <input type="hidden" name="max_pages" value="" data-launch-option="max_pages">
+      <input type="hidden" name="output_format" value="markdown" data-launch-option="output_format">
+      <input type="hidden" name="skip_cache" value="false" data-launch-option="skip_cache">
+      <input type="hidden" name="paginate" value="false" data-launch-option="paginate">
+      <input type="hidden" name="add_block_ids" value="false" data-launch-option="add_block_ids">
+      <input type="hidden" name="include_markdown_in_chunks" value="false" data-launch-option="include_markdown_in_chunks">
+      <div class="launcher-card-title">
+        <strong>폴더</strong>
+        <span>여러 파일</span>
+      </div>
       <label class="launcher-field">
-        <span>Folder Upload</span>
-        <input type="file" name="pdf_files" data-upload-input="pdf_files" accept=".pdf,application/pdf" multiple webkitdirectory directory>
+        <span>폴더 선택</span>
+        <input type="file" name="pdf_files" data-upload-input="pdf_files" accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/png,image/jpeg,image/webp" multiple webkitdirectory directory>
       </label>
       <div class="launcher-selection is-empty" data-upload-preview="pdf_files" aria-live="polite">
         <strong>선택 대기</strong>
-        <p>업로드 전 PDF가 없습니다.</p>
+        <p>업로드 전 파일이 없습니다.</p>
       </div>
-      <p class="launcher-note">브라우저에서 폴더를 직접 선택할 수 있습니다. 폴더 업로드를 쓰지 않으면 아래 경로 입력값을 사용합니다.</p>
       <label class="launcher-field">
-        <span>Source Directory</span>
-        <input type="text" name="source_dir" value="{{ launch_source_dir }}" placeholder="C:\path\to\news_pdfs">
+        <span>폴더 경로</span>
+        <input type="text" name="source_dir" value="{{ launch_source_dir }}" placeholder="C:\문서\입력폴더">
       </label>
       <button class="toolbar-button toolbar-button--primary" type="submit">폴더 처리 시작</button>
     </form>
 
     <form class="launcher-card" method="post" action="{{ url_path('/demo/jobs/start-file') }}" enctype="multipart/form-data">
       <input type="hidden" name="view" value="{{ selected_view }}">
+      <input type="hidden" name="ocr_mode" value="balanced" data-launch-option="ocr_mode">
+      <input type="hidden" name="page_range" value="" data-launch-option="page_range">
+      <input type="hidden" name="max_pages" value="" data-launch-option="max_pages">
+      <input type="hidden" name="output_format" value="markdown" data-launch-option="output_format">
+      <input type="hidden" name="skip_cache" value="false" data-launch-option="skip_cache">
+      <input type="hidden" name="paginate" value="false" data-launch-option="paginate">
+      <input type="hidden" name="add_block_ids" value="false" data-launch-option="add_block_ids">
+      <input type="hidden" name="include_markdown_in_chunks" value="false" data-launch-option="include_markdown_in_chunks">
+      <div class="launcher-card-title">
+        <strong>파일 한 개</strong>
+        <span>문서 또는 그림</span>
+      </div>
       <label class="launcher-field">
-        <span>PDF Upload</span>
-        <input type="file" name="pdf_file" data-upload-input="pdf_file" accept=".pdf,application/pdf">
+        <span>파일 선택</span>
+        <input type="file" name="pdf_file" data-upload-input="pdf_file" accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/png,image/jpeg,image/webp">
       </label>
       <div class="launcher-selection is-empty" data-upload-preview="pdf_file" aria-live="polite">
         <strong>선택 대기</strong>
-        <p>업로드 전 PDF가 없습니다.</p>
+        <p>업로드 전 파일이 없습니다.</p>
       </div>
-      <p class="launcher-note">파일 선택 버튼으로 바로 업로드할 수 있습니다. 선택하지 않으면 아래 경로 입력값을 사용합니다.</p>
       <label class="launcher-field">
-        <span>PDF Path</span>
-        <input type="text" name="pdf_path" placeholder="C:\path\to\file.pdf">
+        <span>파일 경로</span>
+        <input type="text" name="pdf_path" placeholder="C:\문서\파일.pdf 또는 page.png">
       </label>
-      <button class="toolbar-button toolbar-button--primary" type="submit">단일 PDF 처리</button>
+      <button class="toolbar-button toolbar-button--primary" type="submit">단일 파일 처리</button>
     </form>
   </div>
+</section>
+
+<section class="panel job-finder-panel" data-job-finder>
+  <div class="job-finder-head">
+    <div>
+      <p class="panel-kicker">작업 찾기</p>
+      <h2>최근 작업</h2>
+    </div>
+    <label class="job-search-field">
+      <span>검색</span>
+      <input type="search" data-job-search placeholder="파일명, 작업 번호, 상태">
+    </label>
+  </div>
+  {% if jobs %}
+  <div class="job-finder-list">
+    {% for job in jobs %}
+    <a
+      class="job-finder-row {% if job.job_key == selected_job_key %}is-selected{% endif %}"
+      data-job-row
+      data-search="{{ (job.job_key ~ ' ' ~ job.status ~ ' ' ~ job.source_dir ~ ' 작업 ' ~ loop.index)|lower }}"
+      href="{{ url_path('/demo/jobs?job_id=' ~ job.job_key ~ '&view=' ~ selected_view) }}"
+    >
+      <span class="status-pill status-{{ job.status }}">{{ job.status|ui_label }}</span>
+      <strong>작업 {{ loop.index }}</strong>
+      <small>{{ job.source_dir }}</small>
+      <span>파일 {{ job.total_pdfs }} · 기사 {{ job.total_articles }} · {{ "%.1f"|format(job.progress_percent) }}%</span>
+    </a>
+    {% endfor %}
+  </div>
+  <p class="job-finder-empty" data-job-empty hidden>검색 결과가 없습니다.</p>
+  {% else %}
+  <p class="job-finder-empty">아직 작업이 없습니다.</p>
+  {% endif %}
 </section>
 
 {% include "demo/_jobs_content.html" %}
@@ -116,6 +239,76 @@
         .filter((value) => value);
     }
 
+    const presets = {
+      default: {
+        ocr_mode: "balanced",
+        page_range: "",
+        max_pages: "",
+        output_format: "markdown",
+        skip_cache: false,
+        paginate: false,
+        add_block_ids: false,
+        include_markdown_in_chunks: false,
+      },
+      quick: {
+        ocr_mode: "fast",
+        page_range: "0",
+        max_pages: "1",
+        output_format: "markdown",
+        skip_cache: false,
+        paginate: false,
+        add_block_ids: false,
+        include_markdown_in_chunks: false,
+      },
+      accurate: {
+        ocr_mode: "accurate",
+        page_range: "",
+        max_pages: "",
+        output_format: "json,markdown,html,chunks",
+        skip_cache: false,
+        paginate: true,
+        add_block_ids: true,
+        include_markdown_in_chunks: true,
+      },
+      image: {
+        ocr_mode: "accurate",
+        page_range: "",
+        max_pages: "",
+        output_format: "json,markdown,html,chunks",
+        skip_cache: true,
+        paginate: false,
+        add_block_ids: true,
+        include_markdown_in_chunks: true,
+      },
+    };
+
+    function setLaunchControlValue(name, value) {
+      const controls = Array.from(document.querySelectorAll('[data-launch-control="' + name + '"]'));
+      controls.forEach((control) => {
+        if (control.type === "radio") {
+          control.checked = control.value === value;
+          return;
+        }
+        if (control.type === "checkbox") {
+          control.checked = Boolean(value);
+          return;
+        }
+        control.value = value || "";
+      });
+    }
+
+    function applyPreset(name, persist) {
+      const preset = presets[name] || presets.default;
+      Object.entries(preset).forEach(([key, value]) => setLaunchControlValue(key, value));
+      document.querySelectorAll("[data-preset]").forEach((button) => {
+        button.classList.toggle("is-selected", button.dataset.preset === name);
+      });
+      if (persist) {
+        window.localStorage.setItem("aCongDemoPreset", name);
+      }
+      syncLaunchOptions();
+    }
+
     function buildSelectionPreview(input) {
       const target = document.querySelector('[data-upload-preview="' + input.dataset.uploadInput + '"]');
       if (!target) {
@@ -131,7 +324,7 @@
 
       if (!entries.length) {
         title.textContent = "선택 대기";
-        summary.textContent = "업로드 전 PDF가 없습니다.";
+        summary.textContent = "업로드 전 파일이 없습니다.";
         target.append(title, summary);
         return;
       }
@@ -147,12 +340,12 @@
 
       if (roots.length === 1 && entries.length > 1) {
         title.textContent = roots[0];
-        summary.textContent = "폴더 업로드 · " + entries.length + "개 PDF 선택됨";
+        summary.textContent = "폴더 업로드 · " + entries.length + "개 파일 선택됨";
       } else if (entries.length === 1) {
         title.textContent = firstEntry;
-        summary.textContent = "단일 PDF 업로드 준비 완료";
+        summary.textContent = "단일 파일 업로드 준비 완료";
       } else {
-        title.textContent = entries.length + "개 PDF 선택됨";
+        title.textContent = entries.length + "개 파일 선택됨";
         summary.textContent = "여러 파일 업로드 준비 완료";
       }
 
@@ -167,7 +360,7 @@
       });
       if (entries.length > 4) {
         const extra = document.createElement("li");
-        extra.textContent = "+ " + (entries.length - 4) + " more";
+        extra.textContent = "+ " + (entries.length - 4) + "개 더 있음";
         list.appendChild(extra);
       }
       target.appendChild(list);
@@ -178,6 +371,85 @@
         buildSelectionPreview(input);
       });
     }
+
+    function selectedLaunchControlValue(name) {
+      const controls = Array.from(document.querySelectorAll('[data-launch-control="' + name + '"]'));
+      const checked = controls.find((control) => control.type === "radio" && control.checked);
+      if (checked) {
+        return checked.value;
+      }
+      const control = controls[0];
+      if (!control) {
+        return "";
+      }
+      if (control.type === "checkbox") {
+        return control.checked ? "true" : "false";
+      }
+      return control.value || "";
+    }
+
+    function syncLaunchOptions() {
+      const names = Array.from(
+        new Set(Array.from(document.querySelectorAll("[data-launch-option]")).map((input) => input.dataset.launchOption))
+      );
+      names.forEach((name) => {
+        const value = selectedLaunchControlValue(name);
+        document.querySelectorAll('[data-launch-option="' + name + '"]').forEach((input) => {
+          input.value = value;
+        });
+      });
+
+      document.querySelectorAll(".mode-card").forEach((card) => {
+        const input = card.querySelector("input[type='radio']");
+        card.classList.toggle("is-selected", Boolean(input && input.checked));
+      });
+    }
+
+    function syncJobSearch() {
+      const root = document.querySelector("[data-job-finder]");
+      const input = root ? root.querySelector("[data-job-search]") : null;
+      if (!root || !input) {
+        return;
+      }
+      const query = (input.value || "").trim().toLowerCase();
+      let visible = 0;
+      root.querySelectorAll("[data-job-row]").forEach((row) => {
+        const matched = !query || (row.dataset.search || "").includes(query);
+        row.hidden = !matched;
+        if (matched) {
+          visible += 1;
+        }
+      });
+      const empty = root.querySelector("[data-job-empty]");
+      if (empty) {
+        empty.hidden = visible !== 0;
+      }
+    }
+
+    function syncReviewFilter() {
+      const toggle = document.querySelector("[data-review-filter]");
+      const root = document.querySelector("[data-review-list]");
+      if (!toggle || !root) {
+        return;
+      }
+      const showOnlyReview = toggle.checked;
+      let visible = 0;
+      root.querySelectorAll("[data-review-item]").forEach((item) => {
+        const needsReview = item.dataset.needsReview === "true";
+        item.hidden = showOnlyReview && !needsReview;
+        if (!item.hidden) {
+          visible += 1;
+        }
+      });
+      const empty = root.querySelector("[data-review-empty]");
+      if (empty) {
+        empty.hidden = visible !== 0;
+      }
+    }
+
+    window.confirmJobDelete = function confirmJobDelete() {
+      return window.prompt('삭제하려면 "삭제"라고 입력하세요.') === "삭제";
+    };
 
     async function refreshJobsContent() {
       const seconds = refreshSeconds();
@@ -200,7 +472,7 @@
           target.outerHTML = html;
         }
       } catch (error) {
-        console.warn("jobs refresh failed", error);
+        console.warn("작업 새로고침 실패", error);
       } finally {
         state.inFlight = false;
         queueSync();
@@ -235,13 +507,46 @@
       state.observer.observe(document.body, { childList: true, subtree: true });
       document.addEventListener("change", (event) => {
         const input = event.target.closest("input[type='file'][data-upload-input]");
-        if (!input) {
+        if (input) {
+          buildSelectionPreview(input);
           return;
         }
-        buildSelectionPreview(input);
+        if (event.target.closest("[data-launch-control]")) {
+          syncLaunchOptions();
+          window.localStorage.setItem("aCongDemoPreset", "custom");
+          document.querySelectorAll("[data-preset]").forEach((button) => button.classList.remove("is-selected"));
+          return;
+        }
+        if (event.target.closest("[data-review-filter]")) {
+          syncReviewFilter();
+        }
+      });
+      document.addEventListener("input", (event) => {
+        if (event.target.closest("[data-job-search]")) {
+          syncJobSearch();
+        }
+      });
+      document.addEventListener("click", (event) => {
+        const presetButton = event.target.closest("[data-preset]");
+        if (presetButton) {
+          applyPreset(presetButton.dataset.preset || "default", true);
+        }
+      });
+      document.addEventListener("submit", (event) => {
+        if (event.target.closest(".launcher-card")) {
+          syncLaunchOptions();
+        }
       });
     }
 
+    const savedPreset = window.localStorage.getItem("aCongDemoPreset");
+    if (savedPreset && presets[savedPreset]) {
+      applyPreset(savedPreset, false);
+    } else {
+      syncLaunchOptions();
+    }
+    syncJobSearch();
+    syncReviewFilter();
     queueSync();
   })();
 </script>

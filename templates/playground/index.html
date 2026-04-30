@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>army-ocr Playground</title>
+  <base href="__PLAYGROUND_BASE__">
+  <link rel="stylesheet" href="assets/playground.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" aria-label="자료">
+      <div class="brand">
+        <span class="brand-mark">a</span>
+        <span>army-ocr</span>
+      </div>
+      <div class="sidebar-product">
+        <strong>Playground</strong>
+        <span>문서를 올리고 결과를 바로 확인합니다.</span>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-title">바로가기</div>
+        <a class="resource-link" href="__DOCS_URL__" target="_blank" rel="noopener" data-resource-link="docs">
+          <span>문서</span>
+          <span class="resource-state" data-resource-state="docs">열기</span>
+        </a>
+        <a class="resource-link" href="__API_GUIDE_URL__" target="_blank" rel="noopener" data-resource-link="api_guide">
+          <span>API 사용법</span>
+          <span class="resource-state" data-resource-state="api_guide">열기</span>
+        </a>
+        <a class="resource-link" href="__API_REFERENCE_URL__" target="_blank" rel="noopener" data-resource-link="api_reference">
+          <span>API 목록</span>
+          <span class="resource-state" data-resource-state="api_reference">열기</span>
+        </a>
+        <a class="resource-link" href="__OPENAPI_URL__" target="_blank" rel="noopener" data-resource-link="openapi">
+          <span>OpenAPI 원본</span>
+          <span class="resource-state" data-resource-state="openapi">열기</span>
+        </a>
+        <a class="resource-link" href="__API_CAPABILITIES_URL__" target="_blank" rel="noopener" data-resource-link="api_capabilities">
+          <span>기능 확인</span>
+          <span class="resource-state" data-resource-state="api_capabilities">확인 중</span>
+        </a>
+        <a class="resource-link" href="__OCR_HEALTH_URL__" target="_blank" rel="noopener" data-resource-link="ocr_health">
+          <span>서버 상태</span>
+          <span class="resource-state" data-resource-state="ocr_health">확인 중</span>
+        </a>
+        <a class="resource-link" href="__ADMIN_URL__" target="_blank" rel="noopener" data-resource-link="admin">
+          <span>관리자</span>
+          <span class="resource-state" data-resource-state="admin">로그인</span>
+        </a>
+      </div>
+      <div class="sidebar-section resource-summary" aria-live="polite">
+        <div class="sidebar-title">상태</div>
+        <div class="runtime-row">
+          <span>서버</span>
+          <strong id="ocrRuntimeState">확인 중</strong>
+        </div>
+        <div class="runtime-row">
+          <span>동시 처리</span>
+          <strong id="ocrConcurrencyState">-</strong>
+        </div>
+      </div>
+      <div class="sidebar-note">
+        <div class="sidebar-title">결과 파일</div>
+        <p>다운로드 ZIP에는 JSON, Markdown, HTML, 페이지 이미지와 잘라낸 그림이 함께 들어갑니다.</p>
+      </div>
+    </aside>
+
+    <section class="workspace">
+      <header class="topbar">
+        <div class="top-title">army-ocr</div>
+        <div class="flow-steps" aria-label="처리 단계">
+          <span class="step active">문서 읽기</span>
+          <span class="arrow">-></span>
+          <span class="step disabled">영역 나누기</span>
+          <span class="arrow">-></span>
+          <span class="step disabled">값 뽑기</span>
+        </div>
+      </header>
+
+      <main class="split">
+        <section class="document-pane">
+          <div class="document-toolbar" id="documentToolbar" hidden>
+            <button type="button" id="prevPage">이전</button>
+            <span id="pageLabel">0쪽</span>
+            <button type="button" id="nextPage">다음</button>
+            <button type="button" id="toggleThumbs" class="toolbar-spacer">작은 페이지 보기</button>
+          </div>
+
+          <div class="progress-panel" id="progressPanel" hidden aria-live="polite">
+            <div class="progress-copy">
+              <strong id="progressTitle">문서 읽는 중</strong>
+              <span id="progressLabel">0 / 0쪽</span>
+            </div>
+            <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <span id="progressBar"></span>
+            </div>
+            <span id="progressDetail">완료된 페이지부터 바로 표시합니다.</span>
+          </div>
+
+          <div class="upload-stage" id="uploadStage">
+            <div class="upload-heading">
+              <span>입력 문서</span>
+              <strong>PDF나 이미지를 선택하세요</strong>
+            </div>
+            <div class="upload-card">
+              <label class="drop-zone" id="dropZone">
+                <input id="fileInput" name="file" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" multiple hidden>
+                <span class="upload-icon" aria-hidden="true"></span>
+                <strong>파일을 놓거나 클릭</strong>
+                <span>PDF, PNG, JPG, JPEG, WEBP</span>
+              </label>
+              <div class="file-strip">
+                <div class="file-meta">
+                  <span class="file-dot" aria-hidden="true"></span>
+                  <div>
+                    <strong id="fileNameLabel">선택된 파일 없음</strong>
+                    <span id="fileHelpLabel">파일을 선택하면 여기 표시됩니다.</span>
+                  </div>
+                </div>
+                <button type="button" id="clearFileButton">비우기</button>
+              </div>
+              <div class="file-list" id="fileList" hidden></div>
+              <div class="url-row">
+                <input id="fileUrlInput" type="url" placeholder="또는 파일 URL 입력">
+                <button type="button" id="useUrlButton">URL 사용</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="processing-stage" id="processingStage" hidden aria-live="polite">
+            <ol class="process-list">
+              <li data-process-step="upload"><span></span><strong>문서 업로드</strong></li>
+              <li data-process-step="parse"><span></span><strong>글자와 영역 읽기</strong></li>
+              <li data-process-step="render"><span></span><strong>미리보기 만들기</strong></li>
+              <li data-process-step="done"><span></span><strong>완료</strong></li>
+            </ol>
+          </div>
+
+          <div class="preview-stage" id="previewStage" hidden>
+            <div class="page-canvas" id="pageCanvas">
+              <img id="pageImage" alt="OCR 페이지 미리보기">
+              <div id="overlayLayer" class="overlay-layer"></div>
+            </div>
+          </div>
+
+          <div class="thumb-strip" id="thumbStrip" hidden></div>
+        </section>
+
+        <section class="right-pane">
+          <div class="pane-tabs">
+            <button type="button" class="pane-tab active" data-pane="configPane">설정</button>
+            <button type="button" class="pane-tab" data-pane="resultsPane">결과</button>
+            <button type="button" class="pane-tab" data-pane="historyPane">작업 기록</button>
+          </div>
+
+          <form id="configPane" class="config-panel">
+            <div class="config-heading">
+              <span>읽기 설정</span>
+              <strong>필요한 옵션만 빠르게 선택하세요</strong>
+            </div>
+            <div class="config-row">
+              <label for="pageRange">페이지 범위</label>
+              <input id="pageRange" name="page_range" value="0-9">
+              <span class="hint">기본은 10쪽까지입니다. 예: 0-9, 3, 5-7</span>
+            </div>
+
+            <div class="mode-grid" role="radiogroup" aria-label="OCR 모드">
+              <label class="mode-card">
+                <input type="radio" name="mode" value="fast">
+                <span>빠르게</span>
+                <small>대략 확인할 때 씁니다.</small>
+              </label>
+              <label class="mode-card selected">
+                <input type="radio" name="mode" value="balanced" checked>
+                <span>균형</span>
+                <small>일반 문서에 권장합니다.</small>
+              </label>
+              <label class="mode-card">
+                <input type="radio" name="mode" value="accurate">
+                <span>정확하게</span>
+                <small>복잡한 문서에 씁니다.</small>
+              </label>
+            </div>
+
+            <section class="config-section">
+              <h2>추가 기능</h2>
+              <label class="option-card">
+                <input type="checkbox" name="track_changes">
+                <span>변경 내용 보기</span>
+                <small>DOCX에서 수정 흔적을 같이 보고 싶을 때 켭니다.</small>
+              </label>
+              <label class="option-card">
+                <input type="checkbox" name="chart_understanding">
+                <span>차트 읽기</span>
+                <small>표, 그래프, 차트가 많은 문서를 더 꼼꼼히 읽습니다.</small>
+              </label>
+              <label class="option-card">
+                <input type="checkbox" name="infographic_mode">
+                <span>포스터형 문서 읽기</span>
+                <small>글자 위치가 흩어진 포스터, 안내문, 인포그래픽에 씁니다.</small>
+              </label>
+            </section>
+
+            <details class="config-section" open>
+              <summary>세부 설정</summary>
+              <div class="option-grid">
+                <label><input type="checkbox" name="skip_cache" checked> 매번 새로 읽기</label>
+                <label><input type="checkbox" name="paginate"> 페이지 나누기</label>
+                <label><input type="checkbox" name="keep_page_header"> 머리말 보존</label>
+                <label><input type="checkbox" name="keep_page_footer"> 꼬리말 보존</label>
+                <label><input type="checkbox" name="extract_links"> 링크 뽑기</label>
+                <label><input type="checkbox" name="table_row_bboxes"> 표 행 위치 표시</label>
+                <label><input type="checkbox" name="new_block_types"> 더 많은 영역 종류</label>
+                <label><input type="checkbox" name="disable_image_captions"> 그림 설명 끄기</label>
+                <label><input type="checkbox" name="add_block_ids" checked> 영역 ID 붙이기</label>
+                <label><input type="checkbox" name="include_markdown_in_chunks" checked> 조각에 Markdown 포함</label>
+              </div>
+            </details>
+
+            <input type="hidden" name="max_pages" value="10">
+            <div class="actions">
+              <button type="submit" id="convertButton" class="primary">문서 읽기</button>
+              <span id="statusText" class="status-text"></span>
+            </div>
+          </form>
+
+          <section id="resultsPane" class="results-panel" hidden>
+            <div class="results-toolbar">
+              <div class="result-tabs">
+                <button type="button" class="result-tab active" data-result="blocks">영역</button>
+                <button type="button" class="result-tab" data-result="json">JSON</button>
+                <button type="button" class="result-tab" data-result="html">HTML</button>
+                <button type="button" class="result-tab" data-result="markdown">Markdown</button>
+              </div>
+              <label class="render-toggle">
+                <input type="checkbox" id="renderHtml" checked>
+                HTML 미리보기
+              </label>
+              <button type="button" id="copyButton">복사</button>
+              <button type="button" id="downloadButton">이미지 포함 ZIP</button>
+              <button type="button" id="updateSettingsButton">설정 적용</button>
+            </div>
+            <div class="result-body" id="blocksView"></div>
+            <pre class="result-body code-view" id="jsonView" hidden></pre>
+            <div class="result-body html-view" id="htmlView" hidden></div>
+            <pre class="result-body code-view" id="markdownView" hidden></pre>
+          </section>
+
+          <section id="historyPane" class="history-panel" hidden>
+            <div class="history-head">
+              <div>
+                <h2>작업 기록</h2>
+                <p>Playground에서 실행한 OCR 요청을 다시 엽니다.</p>
+              </div>
+              <button type="button" id="reloadHistory">새로고침</button>
+            </div>
+            <label class="history-search">
+              <span>검색</span>
+              <input type="search" id="historySearch" placeholder="파일명, 요청 ID, 상태">
+            </label>
+            <div id="historyList" class="history-list" aria-live="polite"></div>
+            <p id="historyStatusText" class="status-text"></p>
+          </section>
+
+        </section>
+      </main>
+    </section>
+  </div>
+
+  <script src="assets/playground.js"></script>
+</body>
+</html>

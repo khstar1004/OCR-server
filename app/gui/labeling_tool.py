@@ -789,7 +789,7 @@ class RecordPreviewWidget(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("A-Congress OCR Labeling Tool")
+        self.setWindowTitle("army-ocr Labeling Tool")
         self.resize(1680, 1020)
         self.records: list[ArticleRecord] = []
         self.current_index: int | None = None
@@ -1082,7 +1082,6 @@ class MainWindow(QMainWindow):
         cwd = Path.cwd()
         repo_root = Path(__file__).resolve().parents[2]
         candidates = [
-            Path("C:/Users/USER/Desktop/A-Congress-OCR/news_output"),
             repo_root / "news_output",
             cwd / "news_output",
             cwd / "output",
@@ -1708,7 +1707,7 @@ class MainWindow(QMainWindow):
 
 def main() -> int:
     app = QApplication(sys.argv)
-    app.setApplicationName("A-Congress OCR Labeling Tool")
+    app.setApplicationName("army-ocr Labeling Tool")
     window = MainWindow()
     window.show()
     return app.exec()

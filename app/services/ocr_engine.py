@@ -4,6 +4,7 @@ import html
 import json
 import re
 import tempfile
+import threading
 import time
 from collections import Counter
 from collections.abc import Callable, Mapping
@@ -16,6 +17,7 @@ from app.core.config import get_settings
 from app.domain.types import BlockLabel, OCRBlock, PageLayout
 from app.ocr import ChandraHFConfig, ChandraHFLocalRunner, ChandraVLLMRunner, PageImageArtifact, normalize_chandra_page_output
 from app.services.image_preprocessor import RetryImagePreprocessor
+from app.services.runtime_config import runtime_config_value
 from app.utils.geometry import bbox_area, bbox_from_any, bbox_height, box_contains, box_intersection_area, clamp_bbox, normalize_bboxes_to_page
 
 _HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
@@ -28,6 +30,9 @@ class OCREngine:
         self.settings = get_settings()
         self._chandra_runner: ChandraHFLocalRunner | ChandraVLLMRunner | None = None
         self._retry_preprocessor = RetryImagePreprocessor()
+        self._runner_lock = threading.RLock()
+        self._max_concurrent_requests = max(int(self.settings.ocr_max_concurrent_requests or 1), 1)
+        self._inference_gate = threading.BoundedSemaphore(self._max_concurrent_requests)
 
     def parse_page(
         self,
@@ -38,7 +43,7 @@ class OCREngine:
         stage_callback: Callable[[str, str, str], None] | None = None,
     ) -> PageLayout:
         primary_layout = self._parse_once(image_path, page_number, width, height, stage_callback)
-        if not self.settings.ocr_retry_low_quality:
+        if not self._runtime_bool("ocr_retry_low_quality", self.settings.ocr_retry_low_quality):
             self._notify(stage_callback, "ocr_retry", "skipped", "low-quality retry disabled")
             return primary_layout
 
@@ -109,7 +114,7 @@ class OCREngine:
         stage_callback: Callable[[str, str, str], None] | None = None,
     ) -> PageLayout:
         self._notify(stage_callback, "ocr_vl", "running", f"running {self._chandra_display_name()}")
-        raw_vl = self._run_chandra(image_path, page_number, width, height)
+        raw_vl = self._run_chandra(image_path, page_number, width, height, stage_callback)
         self._notify(stage_callback, "ocr_vl", "completed", f"completed {self._chandra_display_name()}")
         self._notify(stage_callback, "ocr_structure", "skipped", "Chandra-only pipeline")
         self._notify(stage_callback, "ocr_fallback", "skipped", "Chandra-only pipeline")
@@ -134,7 +139,11 @@ class OCREngine:
         stage_callback: Callable[[str, str, str], None] | None = None,
     ) -> PageLayout:
         self._notify(stage_callback, "ocr_vl", "running", "calling remote OCR service")
-        payload = self._post_remote_ocr_request(image_path=image_path, page_number=page_number, width=width, height=height)
+        payload = self._run_with_inference_slot(
+            stage_callback,
+            "remote OCR service",
+            lambda: self._post_remote_ocr_request(image_path=image_path, page_number=page_number, width=width, height=height),
+        )
         layout = self._parse_remote_layout(
             payload=payload,
             image_path=image_path,
@@ -156,7 +165,11 @@ class OCREngine:
         stage_callback: Callable[[str, str, str], None] | None = None,
     ) -> PageLayout:
         self._notify(stage_callback, "ocr_vl", "running", "calling remote Datalab Marker service")
-        payload = self._request_remote_marker_result(image_path=image_path)
+        payload = self._run_with_inference_slot(
+            stage_callback,
+            "remote Datalab Marker service",
+            lambda: self._request_remote_marker_result(image_path=image_path),
+        )
         layout = self._parse_remote_marker_layout(
             payload=payload,
             image_path=image_path,
@@ -197,7 +210,14 @@ class OCREngine:
                     best_score = score
             return best_layout
 
-    def _run_chandra(self, image_path: Path, page_number: int, width: int, height: int) -> dict[str, Any]:
+    def _run_chandra(
+        self,
+        image_path: Path,
+        page_number: int,
+        width: int,
+        height: int,
+        stage_callback: Callable[[str, str, str], None] | None = None,
+    ) -> dict[str, Any]:
         config = self._build_chandra_config()
         runner = self._get_chandra_runner(config)
         page = PageImageArtifact(
@@ -206,9 +226,9 @@ class OCREngine:
             width=width,
             height=height,
             source_pdf=image_path,
-            dpi=self.settings.pdf_render_dpi,
+            dpi=self._runtime_int("pdf_render_dpi", self.settings.pdf_render_dpi),
         )
-        outputs = list(runner([page]))
+        outputs = self._run_with_inference_slot(stage_callback, "Chandra OCR", lambda: list(runner([page])))
         if len(outputs) != 1:
             raise RuntimeError("Chandra runner returned an unexpected number of page outputs.")
         _, _, normalized_json, metadata = normalize_chandra_page_output(outputs[0], page, config)
@@ -248,7 +268,7 @@ class OCREngine:
         headers = self._remote_service_headers()
         request_data = {
             "output_format": "json",
-            "mode": self.settings.ocr_service_marker_mode,
+            "mode": self._runtime_str("ocr_service_marker_mode", self.settings.ocr_service_marker_mode),
             "additional_config": json.dumps(
                 {
                     "keep_pageheader_in_output": True,
@@ -288,10 +308,10 @@ class OCREngine:
                 if status == "failed":
                     error_message = str(result.get("error") or "remote Datalab Marker conversion failed")
                     raise ValueError(error_message)
-                time.sleep(max(float(self.settings.ocr_service_poll_interval_sec or 0.5), 0.1))
+                time.sleep(max(self._runtime_float("ocr_service_poll_interval_sec", self.settings.ocr_service_poll_interval_sec), 0.1))
 
     def _remote_service_timeout(self) -> httpx.Timeout:
-        raw_timeout = float(self.settings.ocr_service_timeout_sec or 0.0)
+        raw_timeout = self._runtime_float("ocr_service_timeout_sec", self.settings.ocr_service_timeout_sec)
         if raw_timeout > 0:
             connect_timeout = min(raw_timeout, 30.0)
             return httpx.Timeout(
@@ -429,31 +449,76 @@ class OCREngine:
         source = self._resolve_chandra_source()
         model_id = source
         if method == "vllm":
-            model_id = (self.settings.vllm_model_name or Path(source).name or "chandra-ocr-2").strip()
+            model_id = self._runtime_str(
+                "vllm_model_name",
+                self.settings.vllm_model_name or Path(source).name or "chandra-ocr-2",
+            ).strip()
+        vllm_api_base = self._runtime_str(
+            "vllm_api_base",
+            self.settings.vllm_api_base or "http://localhost:8000/v1",
+        ).strip()
+        prompt_type = self._runtime_str("chandra_prompt_type", self.settings.chandra_prompt_type or "ocr_layout").strip()
+        batch_size = max(self._runtime_int("chandra_batch_size", self.settings.chandra_batch_size or 1), 1)
         return ChandraHFConfig(
             model_id=model_id,
-            prompt_type=self.settings.chandra_prompt_type,
+            prompt_type=prompt_type or "ocr_layout",
             method=method,
             device_map=self.settings.chandra_device_map,
             dtype_name=self.settings.chandra_dtype,
-            batch_size=max(int(self.settings.chandra_batch_size or 1), 1),
-            vllm_api_base=(self.settings.vllm_api_base or "http://localhost:8000/v1").strip() or None,
-            vllm_max_retries=max(int(self.settings.vllm_max_retries or 0), 0) or None,
+            batch_size=batch_size,
+            vllm_api_base=vllm_api_base or None,
+            vllm_max_retries=max(self._runtime_int("vllm_max_retries", self.settings.vllm_max_retries), 0) or None,
         )
 
     def _get_chandra_runner(self, config: ChandraHFConfig) -> ChandraHFLocalRunner | ChandraVLLMRunner:
-        same_config = (
-            self._chandra_runner is not None
-            and self._chandra_runner.config.model_id == config.model_id
-            and self._chandra_runner.config.method == config.method
-            and self._chandra_runner.config.vllm_api_base == config.vllm_api_base
-        )
-        if not same_config:
-            if config.method == "vllm":
-                self._chandra_runner = ChandraVLLMRunner(config=config)
-            else:
-                self._chandra_runner = ChandraHFLocalRunner(config=config)
-        return self._chandra_runner
+        with self._runner_lock:
+            same_config = (
+                self._chandra_runner is not None
+                and self._chandra_runner.config.model_id == config.model_id
+                and self._chandra_runner.config.method == config.method
+                and self._chandra_runner.config.prompt_type == config.prompt_type
+                and self._chandra_runner.config.batch_size == config.batch_size
+                and self._chandra_runner.config.device_map == config.device_map
+                and self._chandra_runner.config.dtype_name == config.dtype_name
+                and self._chandra_runner.config.vllm_api_base == config.vllm_api_base
+                and self._chandra_runner.config.vllm_max_retries == config.vllm_max_retries
+            )
+            if not same_config:
+                if config.method == "vllm":
+                    self._chandra_runner = ChandraVLLMRunner(config=config)
+                else:
+                    self._chandra_runner = ChandraHFLocalRunner(config=config)
+            return self._chandra_runner
+
+    def _run_with_inference_slot(
+        self,
+        stage_callback: Callable[[str, str, str], None] | None,
+        operation_name: str,
+        callback: Callable[[], Any],
+    ) -> Any:
+        self._sync_inference_gate()
+        acquired = self._inference_gate.acquire(blocking=False)
+        if not acquired:
+            self._notify(
+                stage_callback,
+                "ocr_queue",
+                "queued",
+                f"waiting for {operation_name} slot; max_concurrent={self._max_concurrent_requests}",
+            )
+            self._inference_gate.acquire()
+        try:
+            return callback()
+        finally:
+            self._inference_gate.release()
+
+    def _sync_inference_gate(self) -> None:
+        desired = max(self._runtime_int("ocr_max_concurrent_requests", self.settings.ocr_max_concurrent_requests), 1)
+        if desired == self._max_concurrent_requests:
+            return
+        with self._runner_lock:
+            if desired != self._max_concurrent_requests:
+                self._max_concurrent_requests = desired
+                self._inference_gate = threading.BoundedSemaphore(desired)
 
     def _resolve_chandra_source(self) -> str:
         if self.settings.chandra_model_dir:
@@ -486,7 +551,8 @@ class OCREngine:
             "engine": engine_name,
             "backend": backend_name,
             "model_id": metadata.get("model_id") or self._resolve_chandra_source(),
-            "prompt_type": metadata.get("prompt_type") or self.settings.chandra_prompt_type,
+            "prompt_type": metadata.get("prompt_type")
+            or self._runtime_str("chandra_prompt_type", self.settings.chandra_prompt_type or "ocr_layout"),
             "page_no": normalized_json.get("page_no"),
             "width": width,
             "height": height,
@@ -685,14 +751,20 @@ class OCREngine:
     def _is_layout_acceptable(self, layout: PageLayout) -> bool:
         text = self._layout_text(layout)
         compact = self._compact_text(text)
-        if len(compact) < self.settings.ocr_quality_min_chars:
+        if len(compact) < self._runtime_int("ocr_quality_min_chars", self.settings.ocr_quality_min_chars):
             return False
-        return self._korean_ratio(text) >= self.settings.ocr_quality_min_korean_ratio
+        return self._korean_ratio(text) >= self._runtime_float(
+            "ocr_quality_min_korean_ratio",
+            self.settings.ocr_quality_min_korean_ratio,
+        )
 
     def _layout_quality_score(self, layout: PageLayout) -> float:
         text = self._layout_text(layout)
         compact = self._compact_text(text)
-        char_score = min(len(compact) / max(self.settings.ocr_quality_min_chars, 1), 2.0) / 2.0
+        char_score = min(
+            len(compact) / max(self._runtime_int("ocr_quality_min_chars", self.settings.ocr_quality_min_chars), 1),
+            2.0,
+        ) / 2.0
         korean_score = min(self._korean_ratio(text), 1.0)
         image_bonus = 0.1 if any(block.label == BlockLabel.IMAGE for block in layout.blocks) else 0.0
         duplicate_penalty = self._duplicate_line_penalty(text)
@@ -1031,10 +1103,10 @@ class OCREngine:
         return value if isinstance(value, dict) else default
 
     def _should_use_remote_service(self) -> bool:
-        return bool((self.settings.ocr_service_url or "").strip())
+        return bool(self._runtime_str("ocr_service_url", self.settings.ocr_service_url or "").strip())
 
     def _remote_service_mode(self) -> str:
-        return (self.settings.ocr_service_mode or "native").strip().lower()
+        return self._runtime_str("ocr_service_mode", self.settings.ocr_service_mode or "native").strip().lower()
 
     def _remote_service_headers(self) -> dict[str, str]:
         headers: dict[str, str] = {}
@@ -1049,7 +1121,7 @@ class OCREngine:
         return str(httpx.URL(service_url).join(check_url))
 
     def _resolve_ocr_service_url(self, *, service_kind: str = "ocr_image") -> str:
-        service_url = (self.settings.ocr_service_url or "").strip()
+        service_url = self._runtime_str("ocr_service_url", self.settings.ocr_service_url or "").strip()
         if not service_url:
             raise ValueError("OCR_SERVICE_URL is not configured.")
         normalized = service_url.rstrip("/")
@@ -1064,3 +1136,22 @@ class OCREngine:
         if normalized.endswith("/api/v1"):
             return f"{normalized}/ocr/image"
         return f"{normalized}/api/v1/ocr/image"
+
+    def _runtime_bool(self, key: str, fallback: bool) -> bool:
+        return bool(runtime_config_value(key, fallback, self.settings))
+
+    def _runtime_int(self, key: str, fallback: int) -> int:
+        try:
+            return int(runtime_config_value(key, fallback, self.settings))
+        except (TypeError, ValueError):
+            return int(fallback)
+
+    def _runtime_float(self, key: str, fallback: float) -> float:
+        try:
+            return float(runtime_config_value(key, fallback, self.settings))
+        except (TypeError, ValueError):
+            return float(fallback)
+
+    def _runtime_str(self, key: str, fallback: str) -> str:
+        value = runtime_config_value(key, fallback, self.settings)
+        return str(value if value is not None else fallback)

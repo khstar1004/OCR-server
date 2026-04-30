@@ -4,9 +4,10 @@ import asyncio
 from dataclasses import dataclass
 
 from app.config import Settings
-from app.core.files import FileFingerprint, compute_file_hash, fingerprint_for, iter_pdf_files
+from app.core.files import FileFingerprint, compute_file_hash, fingerprint_for, iter_source_files
 from app.models import JobRegistrationResult
 from app.services.jobs import JobsPort
+from app.services.runtime_config import runtime_config_value
 
 
 @dataclass(slots=True)
@@ -37,7 +38,7 @@ class PollingWatcher:
         registrations: list[JobRegistrationResult] = []
         active_paths: set[str] = set()
 
-        for path in iter_pdf_files(self._settings.watch_dir):
+        for path in iter_source_files(self._settings.watch_dir):
             try:
                 fingerprint = fingerprint_for(path)
             except OSError:
@@ -61,7 +62,7 @@ class PollingWatcher:
                 continue
 
             tracked.stable_count += 1
-            if tracked.stable_count < self._settings.stable_scan_count:
+            if tracked.stable_count < self._stable_scan_count():
                 continue
 
             try:
@@ -69,7 +70,7 @@ class PollingWatcher:
             except OSError:
                 continue
 
-            registrations.append(self._jobs.register_pdf(path, file_hash, fingerprint.size))
+            registrations.append(self._jobs.register_source_file(path, file_hash, fingerprint.size))
             tracked.processed_hash = file_hash
 
         for missing_path in set(self._tracked) - active_paths:
@@ -81,8 +82,6 @@ class PollingWatcher:
         self._stop_event = asyncio.Event()
         self._running = True
         self._last_error = None
-        interval = self._settings.poll_interval_sec if self._settings.poll_interval_sec > 0 else 0.1
-
         try:
             while not self._stop_event.is_set():
                 try:
@@ -92,7 +91,7 @@ class PollingWatcher:
                     self._last_error = str(exc)
 
                 try:
-                    await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
+                    await asyncio.wait_for(self._stop_event.wait(), timeout=self._poll_interval_sec())
                 except asyncio.TimeoutError:
                     continue
         finally:
@@ -100,3 +99,17 @@ class PollingWatcher:
 
     def request_stop(self) -> None:
         self._stop_event.set()
+
+    def _poll_interval_sec(self) -> float:
+        try:
+            value = float(runtime_config_value("watch_poll_interval_sec", self._settings.poll_interval_sec))
+        except (TypeError, ValueError):
+            value = float(self._settings.poll_interval_sec)
+        return value if value > 0 else 0.1
+
+    def _stable_scan_count(self) -> int:
+        try:
+            value = int(runtime_config_value("watch_stable_scan_count", self._settings.stable_scan_count))
+        except (TypeError, ValueError):
+            value = int(self._settings.stable_scan_count)
+        return max(value, 1)

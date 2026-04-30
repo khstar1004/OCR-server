@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>army-ocr Docs</title>
+  <base href="__PLAYGROUND_BASE__">
+  <link rel="stylesheet" href="assets/playground.css">
+</head>
+<body class="docs-body">
+  <div class="docs-shell">
+    <aside class="docs-sidebar">
+      <div class="docs-brand"><span class="brand-mark">a</span><span>army-ocr</span></div>
+      <div class="docs-search">Search OCR docs...</div>
+      <nav class="docs-side-nav" aria-label="Documentation sections">
+        <p>Guides</p>
+        <a class="active" href="docs#overview">모델 개요</a>
+        <a href="docs#contract">API 계약</a>
+        <a href="docs#quickstart">Quickstart</a>
+        <a href="docs#sync-vs-async">동기/비동기</a>
+        <a href="docs#flows">연동 흐름</a>
+        <a href="docs#pipeline">처리 파이프라인</a>
+        <a href="docs#inputs">지원 입력</a>
+        <a href="docs#outputs">출력 형식</a>
+        <a href="docs#coordinates">좌표와 블록</a>
+        <a href="docs#error-handling">오류 처리</a>
+        <a href="docs#images">이미지 보존</a>
+        <a href="docs#operations">운영과 동시성</a>
+        <a href="docs#demo-ui">체험 UI</a>
+        <p>API Reference</p>
+        <a href="api-reference#marker">문서 변환</a>
+        <a href="api-reference#ocr-image">이미지 OCR</a>
+        <a href="api-reference#ocr-pdf">PDF OCR</a>
+        <a href="api-reference#workflows">워크플로우</a>
+      </nav>
+      <div class="docs-sidebar-footer">
+        <a href="__PLAYGROUND_URL__">Try in UI</a>
+        <a href="__API_GUIDE_MARKDOWN_URL__">Markdown</a>
+      </div>
+    </aside>
+
+    <section class="docs-main">
+      <header class="docs-topnav">
+        <a class="active" href="__DOCS_URL__">Guides</a>
+        <a href="__API_GUIDE_URL__">API Guide</a>
+        <a href="__API_REFERENCE_URL__">API Reference</a>
+        <a href="__OPENAPI_URL__" target="_blank" rel="noopener">OpenAPI</a>
+        <a href="__PLAYGROUND_URL__">Try OCR</a>
+      </header>
+
+      <main class="docs-content">
+        <article class="docs-article">
+          <p class="docs-eyebrow" id="overview">Model Overview</p>
+          <h1>army-ocr 모델/API</h1>
+          <p class="docs-lead">
+            army-ocr은 Chandra OCR 모델을 문서 처리 서버로 감싼 범용 OCR API입니다.
+            PDF와 이미지에서 텍스트뿐 아니라 문서 구조, 블록 좌표, 이미지 영역까지 추출해
+            검색, RAG, 문서 자동화, 국회 문서 처리 같은 후속 시스템에서 바로 쓸 수 있는 형태로 반환합니다.
+          </p>
+
+          <div class="model-summary-grid">
+            <article>
+              <span>Model</span>
+              <strong>Chandra OCR 2</strong>
+              <p>문서 이미지 기반 OCR 및 layout block 추출</p>
+            </article>
+            <article>
+              <span>Inputs</span>
+              <strong>PDF / Image</strong>
+              <p>PDF, PNG, JPG, JPEG, WEBP</p>
+            </article>
+            <article>
+              <span>Outputs</span>
+              <strong>JSON / MD / HTML</strong>
+              <p>blocks, bbox, chunks, 이미지 포함 ZIP</p>
+            </article>
+          </div>
+
+          <p>
+            이 문서의 주제는 <strong>OCR 모델과 범용 OCR API</strong>입니다. 국회 OCR은 이 API의 결과를
+            국회 문서 업무에 맞게 재가공한 특화 레이어입니다. 브라우저 체험 화면은 모델을 테스트하기 위한
+            보조 UI일 뿐, 외부 연동 계약의 중심은 <code>/api/v1/*</code>입니다.
+          </p>
+
+          <h2 id="contract">API 계약</h2>
+          <p>
+            현재 공개된 API Guide는 FastAPI OpenAPI에 실제 등록된 endpoint만 기준으로 작성합니다.
+            Datalab에 있는 전체 제품 API를 그대로 노출하지 않고, 이 OCR 서비스에 구현된 OCR/문서/파일/컬렉션/템플릿/평가/배치/워크플로우 기능만 다룹니다.
+          </p>
+          <div class="docs-info-grid">
+            <article>
+              <span>Base URL</span>
+              <strong>http://14.50.225.33:18110</strong>
+              <p>인터넷망 preview 기준. 운영 ingress에서는 배포 prefix를 base로 사용합니다.</p>
+            </article>
+            <article>
+              <span>API Prefix</span>
+              <strong>/api/v1</strong>
+              <p>외부 연동 계약은 이 prefix 아래의 endpoint를 기준으로 잡습니다.</p>
+            </article>
+            <article>
+              <span>Auth</span>
+              <strong>Preview: none</strong>
+              <p>현재 preview는 별도 key가 없습니다. 운영 공개 시 gateway 인증을 붙이는 구조입니다.</p>
+            </article>
+            <article>
+              <span>Content Type</span>
+              <strong>multipart / json</strong>
+              <p>OCR 업로드는 multipart, 파일 record 기반 후처리는 JSON body를 사용합니다.</p>
+            </article>
+          </div>
+
+          <h2 id="quickstart">Quickstart</h2>
+          <p>가장 빠른 연동은 health 확인 후 <code>/api/v1/marker</code>에 파일을 올리고, 반환된 <code>request_id</code>로 결과를 조회하는 방식입니다.</p>
+          <pre><code>curl http://127.0.0.1:18110/health
+curl http://127.0.0.1:18110/api/v1/capabilities
+
+curl -X POST http://127.0.0.1:18110/api/v1/marker \
+  -F "file=@sample.pdf" \
+  -F "output_format=json,markdown,html,chunks" \
+  -F "page_range=0" \
+  -F "mode=balanced"
+
+curl http://127.0.0.1:18110/api/v1/marker/{request_id}</code></pre>
+
+          <h2 id="sync-vs-async">동기/비동기 선택</h2>
+          <table>
+            <thead><tr><th>방식</th><th>Endpoint</th><th>언제 사용</th><th>결과 받기</th></tr></thead>
+            <tbody>
+              <tr><td>동기 이미지 OCR</td><td><code>POST /api/v1/ocr/image</code></td><td>이미지 1장 즉시 분석</td><td>응답 본문에 바로 포함</td></tr>
+              <tr><td>동기 PDF OCR</td><td><code>POST /api/v1/ocr/pdf</code></td><td>짧은 PDF를 바로 처리</td><td>응답 본문에 바로 포함</td></tr>
+              <tr><td>비동기 OCR</td><td><code>POST /api/v1/ocr</code></td><td>긴 문서, UI/작업 큐 연동</td><td><code>GET /api/v1/ocr/{request_id}</code></td></tr>
+              <tr><td>비동기 문서 변환</td><td><code>POST /api/v1/marker</code></td><td>JSON/Markdown/HTML/chunks가 필요할 때</td><td><code>GET /api/v1/marker/{request_id}</code></td></tr>
+            </tbody>
+          </table>
+
+          <h2 id="flows">연동 흐름</h2>
+          <div class="flow-grid">
+            <article>
+              <h3>1. 바로 변환</h3>
+              <p>파일을 한 번 올리고 OCR 결과를 바로 받는 가장 단순한 연동입니다.</p>
+              <pre><code>POST /api/v1/marker
+GET  /api/v1/marker/{request_id}</code></pre>
+            </article>
+            <article>
+              <h3>2. 파일 저장소 기반 처리</h3>
+              <p>파일을 먼저 등록한 뒤 문서 생성, 변환, 분할, 추출에 재사용합니다.</p>
+              <pre><code>POST /api/v1/files
+POST /api/v1/create_document
+POST /api/v1/convert_document</code></pre>
+            </article>
+            <article>
+              <h3>3. 구조화 추출</h3>
+              <p>필드 schema를 만들고 OCR 텍스트에서 필요한 값만 뽑습니다.</p>
+              <pre><code>POST /api/v1/generate_extraction_schemas
+POST /api/v1/extract_structured_data</code></pre>
+            </article>
+            <article>
+              <h3>4. 일괄 처리</h3>
+              <p>컬렉션에 여러 파일을 넣고 변환/분할/추출을 batch로 실행합니다.</p>
+              <pre><code>POST /api/v1/collections
+POST /api/v1/batch_runs
+GET  /api/v1/batch_runs/{batch_run_id}/results</code></pre>
+            </article>
+          </div>
+
+          <h2 id="pipeline">처리 파이프라인</h2>
+          <ol class="docs-steps">
+            <li><strong>입력 수신</strong><span>업로드 파일 또는 <code>file_url</code>을 받습니다.</span></li>
+            <li><strong>페이지 렌더링</strong><span>PDF는 페이지 이미지로 렌더링하고, 이미지는 그대로 사용합니다.</span></li>
+            <li><strong>Chandra OCR</strong><span>vLLM 또는 HF runner를 통해 OCR/layout 추론을 실행합니다.</span></li>
+            <li><strong>구조화</strong><span>블록, bbox, 텍스트, Markdown, HTML, chunks를 구성합니다.</span></li>
+            <li><strong>결과 저장</strong><span>요청별 <code>request_id</code> 디렉터리에 결과와 이미지 산출물을 분리 저장합니다.</span></li>
+          </ol>
+
+          <h2 id="inputs">지원 입력</h2>
+          <table>
+            <thead><tr><th>입력</th><th>지원</th><th>메모</th></tr></thead>
+            <tbody>
+              <tr><td>PDF</td><td>지원</td><td>페이지별 이미지 렌더링 후 OCR</td></tr>
+              <tr><td>PNG/JPG/JPEG/WEBP</td><td>지원</td><td>단일 이미지 또는 문서 이미지 OCR</td></tr>
+              <tr><td>URL 입력</td><td>지원</td><td><code>file_url</code> 또는 UI URL 입력</td></tr>
+              <tr><td>DOCX/스프레드시트</td><td>범용 OCR 경로에서는 미지원</td><td>이미지/PDF로 변환 후 입력 권장</td></tr>
+            </tbody>
+          </table>
+
+          <h2 id="outputs">출력 형식</h2>
+          <table>
+            <thead><tr><th>출력</th><th>설명</th><th>주요 사용처</th></tr></thead>
+            <tbody>
+              <tr><td><code>json</code></td><td>페이지, 블록, bbox, metadata를 포함한 구조화 결과</td><td>후처리, DB 저장, 감사</td></tr>
+              <tr><td><code>markdown</code></td><td>문서 본문과 이미지 참조를 읽기 쉬운 문서로 변환</td><td>RAG, 지식관리, 리뷰</td></tr>
+              <tr><td><code>html</code></td><td>브라우저 렌더링 가능한 문서 뷰</td><td>웹 미리보기, 검수 화면</td></tr>
+              <tr><td><code>chunks</code></td><td>검색/임베딩을 위한 조각 단위 결과</td><td>벡터 검색, 검색 색인</td></tr>
+              <tr><td><code>zip</code></td><td>결과 문서와 이미지 파일을 함께 묶은 산출물</td><td>오프라인 전달, 재현 가능한 보관</td></tr>
+            </tbody>
+          </table>
+
+          <h2 id="coordinates">좌표와 블록</h2>
+          <p>
+            모든 bbox는 렌더링된 페이지 이미지의 픽셀 좌표입니다. 형식은 <code>[x1, y1, x2, y2]</code>이고,
+            <code>page_range</code>는 zero-based, 응답의 <code>page_number</code>는 1-based입니다.
+          </p>
+          <pre><code>{
+  "label": "text",
+  "bbox": [60, 80, 400, 140],
+  "text": "문서에서 추출된 본문",
+  "confidence": 0.95
+}</code></pre>
+
+          <h2 id="error-handling">오류 처리</h2>
+          <p>FastAPI 표준 오류 응답을 사용합니다. 입력 형식 오류, 잘못된 <code>page_range</code>, 존재하지 않는 <code>request_id</code>는 명확한 HTTP 상태 코드와 <code>detail</code>로 반환됩니다.</p>
+          <table>
+            <thead><tr><th>상태</th><th>대표 상황</th><th>대응</th></tr></thead>
+            <tbody>
+              <tr><td><code>400</code></td><td>빈 파일, 잘못된 mode/page_range, 필수 입력 누락</td><td>요청 파라미터와 파일을 수정합니다.</td></tr>
+              <tr><td><code>404</code></td><td>존재하지 않는 request/file/document/template ID</td><td>ID가 맞는지, 결과가 정리되지 않았는지 확인합니다.</td></tr>
+              <tr><td><code>413</code></td><td>체험 UI 업로드 크기 제한 초과</td><td>문서를 분할하거나 운영 API 제한을 조정합니다.</td></tr>
+              <tr><td><code>422</code></td><td>FastAPI validation 오류</td><td>필드 타입과 JSON 구조를 확인합니다.</td></tr>
+              <tr><td><code>503</code></td><td>OCR 서비스 초기화 전</td><td>health를 재확인하고 vLLM/OCR worker 상태를 점검합니다.</td></tr>
+            </tbody>
+          </table>
+
+          <h2 id="images">이미지 보존</h2>
+          <p>
+            이미지가 중요한 문서에서는 Markdown에 링크만 남기면 결과 재현성이 떨어집니다.
+            그래서 OCR 체험 UI의 다운로드는 실제 이미지 파일을 함께 포함한 ZIP으로 제공합니다.
+          </p>
+          <pre><code>result.json
+result.md
+result.html
+README.txt
+images/page-0001.png
+images/page-0001-image-0001.png</code></pre>
+
+          <h2 id="operations">운영과 동시성</h2>
+          <p>
+            단일 vLLM worker 또는 단일 GPU 구성에서는 <code>OCR_MAX_CONCURRENT_REQUESTS=1</code>을 권장합니다.
+            여러 사용자가 동시에 요청해도 각 요청은 고유 <code>request_id</code>로 분리되고, OCR 모델 호출은 gate에서
+            순서대로 통과합니다. 병렬 처리량을 늘릴 때는 vLLM <code>--max-num-seqs</code>, GPU 메모리,
+            <code>OCR_MAX_CONCURRENT_REQUESTS</code>를 같이 조정해야 합니다.
+          </p>
+          <p>
+            timeout, Chandra prompt/batch, playground 기본 쪽수, 업로드 제한, 국회 API 주소,
+            LLM 후처리 주소, 감시 폴더 polling 값처럼 자주 바뀌는 값은
+            <code>/playground/admin</code> 관리자 페이지 또는 관리자 세션을 가진 <code>/playground/api/admin/runtime-settings</code>에서 저장합니다.
+            Docker/k8s 기본 저장 위치는 <code>/data/runtime/runtime-config/settings.json</code>이며, 이미지를 다시 만들지 않고 새 요청부터 반영됩니다.
+            vLLM 모델 경로, <code>max-num-seqs</code>, context 길이, GPU 메모리, 이미지 pixel limit처럼
+            <code>restart_required</code>인 값은 저장 후 vLLM Pod만 재시작하면 entrypoint가 저장 JSON을 읽어 반영합니다.
+            계정 신청과 승인 상태는 <code>/data/runtime/runtime-config/auth.json</code>에 저장됩니다.
+          </p>
+
+          <h2 id="demo-ui">체험 UI</h2>
+          <p>
+            <code>/playground/</code>는 모델/API를 직접 호출하기 전에 결과 품질과 출력 형식을 눈으로 확인하는 웹 클라이언트입니다.
+            제품 설명과 연동 문서는 OCR 모델/API를 기준으로 읽고, UI는 데모와 QA 용도로 사용하면 됩니다.
+            UI는 긴 OCR 요청이 브라우저 요청 하나에 묶이지 않도록 <code>/playground/api/convert/start</code>로 제출하고
+            <code>/playground/api/convert/{request_id}</code>로 상태를 확인합니다.
+          </p>
+        </article>
+
+        <aside class="docs-toc">
+          <p>On this page</p>
+          <a href="docs#overview">모델 개요</a>
+          <a href="docs#contract">API 계약</a>
+          <a href="docs#quickstart">Quickstart</a>
+          <a href="docs#sync-vs-async">동기/비동기</a>
+          <a href="docs#flows">연동 흐름</a>
+          <a href="docs#pipeline">처리 파이프라인</a>
+          <a href="docs#inputs">지원 입력</a>
+          <a href="docs#outputs">출력 형식</a>
+          <a href="docs#coordinates">좌표와 블록</a>
+          <a href="docs#error-handling">오류 처리</a>
+          <a href="docs#operations">운영과 동시성</a>
+          <a href="admin">관리자 페이지</a>
+        </aside>
+      </main>
+    </section>
+  </div>
+</body>
+</html>

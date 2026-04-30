@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>army-ocr 로그인</title>
+  <base href="__PLAYGROUND_BASE__">
+  <link rel="stylesheet" href="assets/playground.css">
+</head>
+<body class="auth-body">
+  <main class="auth-shell">
+    <section class="auth-panel">
+      <div class="brand auth-brand">
+        <span class="brand-mark">a</span>
+        <span>army-ocr</span>
+      </div>
+      <div class="auth-copy">
+        <span>관리자 승인 기반 접근</span>
+        <h1>운영 설정은 관리자만 수정합니다</h1>
+        <p>일반 사용자는 계정 신청 후 승인되면 playground와 결과 기록을 사용할 수 있습니다.</p>
+      </div>
+      <div class="auth-links">
+        <a href="__PLAYGROUND_URL__">Playground</a>
+        <a href="__DOCS_URL__">문서</a>
+        <a href="__API_REFERENCE_URL__">API 목록</a>
+      </div>
+    </section>
+
+    <section class="auth-card">
+      <div class="auth-tabs" role="tablist">
+        <button type="button" class="auth-tab active" data-auth-pane="loginPane">로그인</button>
+        <button type="button" class="auth-tab" data-auth-pane="signupPane">계정 신청</button>
+      </div>
+
+      <form id="loginPane" class="auth-form">
+        <h2>로그인</h2>
+        <label>
+          <span>아이디</span>
+          <input name="username" autocomplete="username" required>
+        </label>
+        <label>
+          <span>비밀번호</span>
+          <input name="password" type="password" autocomplete="current-password" required>
+        </label>
+        <button type="submit" class="primary">로그인</button>
+      </form>
+
+      <form id="signupPane" class="auth-form" hidden>
+        <h2>계정 신청</h2>
+        <label>
+          <span>아이디</span>
+          <input name="username" autocomplete="username" required minlength="3">
+        </label>
+        <label>
+          <span>이름</span>
+          <input name="display_name" autocomplete="name" required>
+        </label>
+        <label>
+          <span>이메일</span>
+          <input name="email" type="email" autocomplete="email">
+        </label>
+        <label>
+          <span>비밀번호</span>
+          <input name="password" type="password" autocomplete="new-password" required minlength="8">
+        </label>
+        <label>
+          <span>신청 사유</span>
+          <textarea name="reason" rows="4" placeholder="소속, 사용 목적, 필요한 기능"></textarea>
+        </label>
+        <button type="submit" class="primary">신청하기</button>
+      </form>
+      <p id="authStatusText" class="status-text"></p>
+    </section>
+  </main>
+  <script src="assets/auth.js"></script>
+</body>
+</html>

@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 
 from app.core.config import get_settings
+from app.services.runtime_config import runtime_config_value
 from app.schemas.job import ArticleResponse, JobResultResponse
 from app.utils.json_utils import dump_json
 
@@ -33,6 +34,17 @@ class NewsDeliveryError(Exception):
 class NewsImageRecord:
     caption: str | None
     path: Path
+
+
+@dataclass(slots=True)
+class NewsImageCheck:
+    image_id: int
+    image_path: str | None
+    src: str | None
+    included: bool
+    reason: str | None
+    size_bytes: int | None
+    caption: str
 
 
 @dataclass(slots=True)
@@ -63,7 +75,7 @@ class NewsDeliveryClient:
         return bool(self.resolve_target_url(None))
 
     def resolve_target_url(self, _target_url: str | None) -> str | None:
-        configured = (self.settings.target_api_base_url or "").strip()
+        configured = str(runtime_config_value("target_api_base_url", self.settings.target_api_base_url or "", self.settings) or "").strip()
         if not configured:
             return None
         if configured.rstrip("/").endswith("/news"):
@@ -170,6 +182,98 @@ class NewsDeliveryClient:
             failed=len(articles),
         )
 
+    def build_payload_preview(
+        self,
+        articles: list[ArticleResponse],
+        *,
+        target_url: str | None = None,
+    ) -> dict[str, Any]:
+        resolved_target_url = self.resolve_target_url(target_url)
+        records: list[NewsArticleRecord] = []
+        checks_by_article: list[list[NewsImageCheck]] = []
+
+        for article_index, article in enumerate(articles):
+            record, image_checks = self._prepare_article_record_with_checks(article, article_index=article_index)
+            records.append(record)
+            checks_by_article.append(image_checks)
+
+        request_body = self._build_request_body(records)
+        article_previews: list[dict[str, Any]] = []
+        included_image_count = 0
+        skipped_image_count = 0
+        ready_count = 0
+        warning_count = 0
+        blocked_count = 0
+        summary_reasons: dict[str, int] = {}
+
+        for article_index, (article, record, image_checks) in enumerate(zip(articles, records, checks_by_article, strict=True)):
+            included = [item for item in image_checks if item.included]
+            skipped = [item for item in image_checks if not item.included]
+            validation_status, validation_reasons = self._validate_prepared_article(record, image_checks)
+            if validation_status == "blocked":
+                blocked_count += 1
+            elif validation_status == "warning":
+                warning_count += 1
+            else:
+                ready_count += 1
+            for reason in validation_reasons:
+                summary_reasons[reason] = summary_reasons.get(reason, 0) + 1
+            included_image_count += len(included)
+            skipped_image_count += len(skipped)
+            article_previews.append(
+                {
+                    "article_id": article.article_id,
+                    "page_number": article.page_number,
+                    "article_order": article.article_order,
+                    "validation_status": validation_status,
+                    "validation_reasons": validation_reasons,
+                    "title": record.title,
+                    "body_text_length": len(record.body_text),
+                    "relevance_score": record.relevance_score,
+                    "publication": record.publication,
+                    "issue_date": record.issue_date,
+                    "included_image_count": len(included),
+                    "skipped_image_count": len(skipped),
+                    "images": [
+                        {
+                            "image_id": item.image_id,
+                            "image_path": item.image_path,
+                            "src": item.src,
+                            "included": item.included,
+                            "reason": item.reason,
+                            "size_bytes": item.size_bytes,
+                            "caption": item.caption,
+                        }
+                        for item in image_checks
+                    ],
+                    "request_article": request_body[article_index],
+                }
+            )
+
+        delivery_status = "ready"
+        if not resolved_target_url or blocked_count:
+            delivery_status = "blocked"
+        elif warning_count or skipped_image_count:
+            delivery_status = "warning"
+        if not resolved_target_url:
+            summary_reasons["target_not_configured"] = summary_reasons.get("target_not_configured", 0) + 1
+        return {
+            "target_url": resolved_target_url,
+            "target_configured": bool(resolved_target_url),
+            "delivery_status": delivery_status,
+            "ready_count": ready_count,
+            "warning_count": warning_count,
+            "blocked_count": blocked_count,
+            "validation_summary": [
+                reason for reason, _count in sorted(summary_reasons.items(), key=lambda item: (-item[1], item[0]))[:8]
+            ],
+            "article_count": len(article_previews),
+            "included_image_count": included_image_count,
+            "skipped_image_count": skipped_image_count,
+            "articles": article_previews,
+            "body": request_body,
+        }
+
     def _deliver_individually_after_batch_failure(
         self,
         records: list[NewsArticleRecord],
@@ -254,7 +358,7 @@ class NewsDeliveryClient:
                 target_url,
                 files=files,
                 headers=headers,
-                timeout=self.settings.target_api_timeout_sec,
+                timeout=float(runtime_config_value("target_api_timeout_sec", self.settings.target_api_timeout_sec, self.settings)),
             )
 
     @staticmethod
@@ -294,39 +398,123 @@ class NewsDeliveryClient:
         return payload
 
     def _prepare_article_record(self, article: ArticleResponse) -> NewsArticleRecord:
+        record, _image_checks = self._prepare_article_record_with_checks(article)
+        return record
+
+    def _prepare_article_record_with_checks(
+        self,
+        article: ArticleResponse,
+        *,
+        article_index: int | None = None,
+    ) -> tuple[NewsArticleRecord, list[NewsImageCheck]]:
         source_metadata = article.source_metadata
         publication = self._truncate_text(getattr(source_metadata, "publication", None), MAX_PUBLICATION_LENGTH)
         issue_date = self._normalize_issue_date(getattr(source_metadata, "issue_date", None))
         title = self._truncate_text(article.title, MAX_TITLE_LENGTH)
         body_text = self._truncate_text(article.body_text, 2000)
 
-        images: list[NewsImageRecord] = []
-        for image_index, image in enumerate(article.images):
-            resolved_path = self._resolve_output_path(image.image_path)
-            if resolved_path is None or not resolved_path.exists() or not resolved_path.is_file():
-                continue
-            if resolved_path.stat().st_size > MAX_IMAGE_BYTES:
-                continue
-            images.append(
-                NewsImageRecord(
-                    caption=self._truncate_text(self._join_caption_lines(image), MAX_CAPTION_LENGTH) or None,
-                    path=resolved_path,
-                )
-            )
+        images, image_checks = self._prepare_article_images(article, article_index=article_index)
 
         bundle_dir = self._resolve_bundle_dir(article)
         score = article.relevance_score if article.relevance_score is not None else 0.0
         normalized_score = self._coerce_score(score)
-        return NewsArticleRecord(
-            article_id=article.article_id,
-            title=title,
-            body_text=body_text,
-            relevance_score=normalized_score,
-            publication=publication,
-            issue_date=issue_date,
-            bundle_dir=bundle_dir,
-            images=images,
+        return (
+            NewsArticleRecord(
+                article_id=article.article_id,
+                title=title,
+                body_text=body_text,
+                relevance_score=normalized_score,
+                publication=publication,
+                issue_date=issue_date,
+                bundle_dir=bundle_dir,
+                images=images,
+            ),
+            image_checks,
         )
+
+    def _prepare_article_images(
+        self,
+        article: ArticleResponse,
+        *,
+        article_index: int | None = None,
+    ) -> tuple[list[NewsImageRecord], list[NewsImageCheck]]:
+        images: list[NewsImageRecord] = []
+        image_checks: list[NewsImageCheck] = []
+
+        for image in article.images:
+            raw_path = str(image.image_path or "").strip()
+            caption = self._truncate_text(self._join_caption_lines(image), MAX_CAPTION_LENGTH)
+            resolved_path = self._resolve_output_path(raw_path)
+
+            if resolved_path is None or not resolved_path.exists() or not resolved_path.is_file():
+                image_checks.append(
+                    NewsImageCheck(
+                        image_id=image.image_id,
+                        image_path=raw_path or None,
+                        src=None,
+                        included=False,
+                        reason="missing_file",
+                        size_bytes=None,
+                        caption=caption,
+                    )
+                )
+                continue
+
+            size_bytes = resolved_path.stat().st_size
+            if size_bytes > MAX_IMAGE_BYTES:
+                image_checks.append(
+                    NewsImageCheck(
+                        image_id=image.image_id,
+                        image_path=str(resolved_path),
+                        src=None,
+                        included=False,
+                        reason="too_large",
+                        size_bytes=size_bytes,
+                        caption=caption,
+                    )
+                )
+                continue
+
+            included_index = len(images)
+            src = f"file_{article_index}_{included_index}" if article_index is not None else None
+            images.append(NewsImageRecord(caption=caption or None, path=resolved_path))
+            image_checks.append(
+                NewsImageCheck(
+                    image_id=image.image_id,
+                    image_path=str(resolved_path),
+                    src=src,
+                    included=True,
+                    reason=None,
+                    size_bytes=size_bytes,
+                    caption=caption,
+                )
+            )
+
+        return images, image_checks
+
+    @staticmethod
+    def _validate_prepared_article(
+        record: NewsArticleRecord,
+        image_checks: list[NewsImageCheck],
+    ) -> tuple[str, list[str]]:
+        blocked_reasons: list[str] = []
+        warning_reasons: list[str] = []
+        if not record.title:
+            blocked_reasons.append("missing_title")
+        if not record.body_text:
+            blocked_reasons.append("missing_body")
+        if not record.publication:
+            warning_reasons.append("missing_publication")
+        if not record.issue_date:
+            warning_reasons.append("missing_issue_date")
+        skipped = [item for item in image_checks if not item.included]
+        if skipped:
+            warning_reasons.extend(sorted({f"image_{item.reason or 'skipped'}" for item in skipped}))
+        if blocked_reasons:
+            return "blocked", blocked_reasons + warning_reasons
+        if warning_reasons:
+            return "warning", warning_reasons
+        return "ready", []
 
     @staticmethod
     def _join_caption_lines(article_image: Any) -> str:

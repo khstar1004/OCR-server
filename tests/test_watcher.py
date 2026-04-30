@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 import time
 
@@ -8,6 +9,10 @@ from app.core.database import AppDatabase
 from app.repos.sqlite import SQLiteArticleRepository, SQLiteJobRepository
 from app.services.jobs import JobsService
 from app.services.watcher import PollingWatcher
+
+PNG_1X1 = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC"
+)
 
 
 def build_settings(tmp_path: Path) -> Settings:
@@ -85,3 +90,18 @@ def test_watcher_skips_duplicate_job_after_same_file_is_re_copied(tmp_path: Path
     saved_jobs = jobs.list_jobs()
     assert len(saved_jobs) == 1
     assert saved_jobs[0].file_name == "signal.pdf"
+
+
+def test_watcher_registers_image_inputs(tmp_path: Path) -> None:
+    jobs, watcher, settings = build_watcher(tmp_path)
+    image_path = settings.watch_dir / "encrypted-page.png"
+
+    image_path.write_bytes(PNG_1X1)
+    watcher.scan_once()
+    watcher.scan_once()
+    watcher.scan_once()
+
+    saved_jobs = jobs.list_jobs()
+    assert len(saved_jobs) == 1
+    assert saved_jobs[0].source_path == str(image_path.resolve())
+    assert saved_jobs[0].file_name == "encrypted-page.png"

@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>army-ocr API Guide</title>
+  <base href="__PLAYGROUND_BASE__">
+  <link rel="stylesheet" href="assets/playground.css">
+</head>
+<body class="docs-body">
+  <div class="docs-shell">
+    <aside class="docs-sidebar">
+      <div class="docs-brand"><span class="brand-mark">a</span><span>army-ocr</span></div>
+      <div class="docs-search">Search API guide...</div>
+      <nav class="docs-side-nav" aria-label="API guide">
+        <p>API Guide</p>
+        <a class="active" href="api-guide#overview">개요</a>
+        <a href="api-guide#contract">계약과 인증</a>
+        <a href="api-guide#quickstart">Quickstart</a>
+        <a href="api-guide#direct-ocr">Direct OCR</a>
+        <a href="api-guide#marker">Document Convert</a>
+        <a href="api-guide#files">Files</a>
+        <a href="api-guide#documents">Documents</a>
+        <a href="api-guide#extraction">Extraction</a>
+        <a href="api-guide#workflows">Workflows</a>
+        <a href="api-guide#batch">Collections & Batch</a>
+        <a href="api-guide#templates">Templates & Eval</a>
+        <a href="api-guide#assets">Images & Downloads</a>
+        <a href="api-guide#errors">Errors</a>
+        <a href="api-guide#runtime-settings">Runtime Settings</a>
+        <a href="api-guide#production">운영 체크리스트</a>
+        <p>Reference</p>
+        <a href="api-reference#marker">Marker Convert</a>
+        <a href="api-reference#files">Files</a>
+        <a href="api-reference#documents">Documents</a>
+        <a href="api-reference#extraction">Extraction</a>
+      </nav>
+      <div class="docs-sidebar-footer">
+        <a href="__API_GUIDE_MARKDOWN_URL__">Markdown</a>
+        <a href="__API_REFERENCE_URL__">API Reference</a>
+      </div>
+    </aside>
+
+    <section class="docs-main">
+      <header class="docs-topnav">
+        <a href="__DOCS_URL__">Guides</a>
+        <a class="active" href="__API_GUIDE_URL__">API Guide</a>
+        <a href="__API_REFERENCE_URL__">API Reference</a>
+        <a href="__OPENAPI_URL__" target="_blank" rel="noopener">OpenAPI</a>
+        <a href="__PLAYGROUND_URL__">Try OCR</a>
+      </header>
+
+      <main class="docs-content api-docs-content">
+        <article class="docs-article">
+          <p class="docs-eyebrow" id="overview">Integration Guide</p>
+          <h1>army-ocr API Guide</h1>
+          <p class="docs-lead">
+            이 문서는 외부 서비스가 army-ocr을 호출해 PDF/이미지를 구조화 문서로 바꾸는 방법을 설명합니다.
+            구현된 OCR 서비스 API만 다루며, 브라우저 체험 UI 전용 endpoint는 마지막 보조 항목으로만 분리합니다.
+          </p>
+
+          <div class="docs-callout">
+            <strong>연동 기준</strong>
+            <span>제품 연동은 <code>/api/v1/*</code>를 기준으로 합니다. <code>/playground/*</code>는 사람이 결과를 확인하는 데모/QA 클라이언트입니다.</span>
+          </div>
+
+          <h2 id="contract">계약과 인증</h2>
+          <table>
+            <thead><tr><th>항목</th><th>값</th><th>설명</th></tr></thead>
+            <tbody>
+              <tr><td>Preview Base URL</td><td><code>http://14.50.225.33:18110</code></td><td>인터넷망 체험용 주소</td></tr>
+              <tr><td>Local Base URL</td><td><code>http://127.0.0.1:18110</code></td><td>현재 PC preview 주소</td></tr>
+              <tr><td>API Prefix</td><td><code>/api/v1</code></td><td>외부 연동 계약의 기준 prefix</td></tr>
+              <tr><td>OpenAPI</td><td><code>/openapi.json</code></td><td>실제 등록된 endpoint 목록</td></tr>
+              <tr><td>Auth</td><td>Preview 없음</td><td>운영 공개 시 gateway/reverse proxy 인증 권장</td></tr>
+              <tr><td>Upload</td><td><code>multipart/form-data</code></td><td>파일 OCR, marker 변환, 파일 등록</td></tr>
+              <tr><td>Record API</td><td><code>application/json</code></td><td>문서/컬렉션/템플릿/추출/배치 API</td></tr>
+            </tbody>
+          </table>
+
+          <h2 id="quickstart">Quickstart</h2>
+          <p>가장 단순한 사용법은 파일을 <code>/api/v1/marker</code>에 올리고, <code>request_id</code>로 결과를 조회하는 흐름입니다.</p>
+          <pre><code>BASE_URL="http://127.0.0.1:18110"
+
+curl "$BASE_URL/health"
+curl "$BASE_URL/api/v1/capabilities"
+
+curl -X POST "$BASE_URL/api/v1/marker" \
+  -F "file=@sample.pdf" \
+  -F "output_format=json,markdown,html,chunks" \
+  -F "page_range=0" \
+  -F "mode=balanced"
+
+curl "$BASE_URL/api/v1/marker/{request_id}"</code></pre>
+
+          <h3>Python 예시</h3>
+          <pre><code>import time
+import requests
+
+base_url = "http://127.0.0.1:18110"
+
+with open("sample.pdf", "rb") as file:
+    submit = requests.post(
+        f"{base_url}/api/v1/marker",
+        files={"file": file},
+        data={
+            "output_format": "json,markdown,html,chunks",
+            "page_range": "0",
+            "mode": "balanced",
+        },
+    ).json()
+
+request_id = submit["request_id"]
+while True:
+    result = requests.get(f"{base_url}/api/v1/marker/{request_id}").json()
+    if result["status"] != "processing":
+        break
+    time.sleep(1)
+
+print(result["status"])
+print(result.get("markdown", ""))</code></pre>
+
+          <h2 id="direct-ocr">Direct OCR</h2>
+          <p>Direct OCR는 한 번의 응답에서 OCR 결과를 바로 받습니다. 짧은 이미지/PDF 테스트에 적합합니다.</p>
+          <table>
+            <thead><tr><th>Endpoint</th><th>입력</th><th>결과</th></tr></thead>
+            <tbody>
+              <tr><td><code>POST /api/v1/ocr/image</code></td><td>이미지 파일</td><td>text, markdown, blocks, bbox</td></tr>
+              <tr><td><code>POST /api/v1/ocr/pdf</code></td><td>PDF 파일</td><td>pages 배열, 페이지별 blocks</td></tr>
+            </tbody>
+          </table>
+          <pre><code>curl -X POST "$BASE_URL/api/v1/ocr/image" \
+  -F "file=@page.png" \
+  -F "include_raw=false"
+
+curl -X POST "$BASE_URL/api/v1/ocr/pdf" \
+  -F "file=@sample.pdf" \
+  -F "page_range=0-2" \
+  -F "include_raw=false"</code></pre>
+
+          <h2 id="marker">Document Convert</h2>
+          <p><code>/api/v1/marker</code>는 OCR 결과를 JSON, Markdown, HTML, chunks로 구조화합니다. 일반 연동에서는 이 endpoint를 우선 사용합니다.</p>
+          <table>
+            <thead><tr><th>Field</th><th>기본값</th><th>설명</th></tr></thead>
+            <tbody>
+              <tr><td><code>file</code> 또는 <code>file.0</code></td><td>-</td><td>업로드 파일</td></tr>
+              <tr><td><code>file_url</code></td><td>-</td><td>HTTP(S), file path, file URL</td></tr>
+              <tr><td><code>output_format</code></td><td><code>markdown</code></td><td><code>json,markdown,html,chunks</code> 복수 지정</td></tr>
+              <tr><td><code>mode</code></td><td><code>balanced</code></td><td><code>fast</code>, <code>balanced</code>, <code>accurate</code></td></tr>
+              <tr><td><code>page_range</code></td><td>전체</td><td>zero-based. 예: <code>0</code>, <code>0-2</code>, <code>0,2</code></td></tr>
+              <tr><td><code>max_pages</code></td><td>전체</td><td>처리할 최대 페이지 수</td></tr>
+              <tr><td><code>paginate</code></td><td><code>false</code></td><td>페이지 구분 유지</td></tr>
+              <tr><td><code>add_block_ids</code></td><td><code>false</code></td><td>HTML/블록에 ID 추가</td></tr>
+              <tr><td><code>include_markdown_in_chunks</code></td><td><code>false</code></td><td>chunk에 markdown 포함</td></tr>
+            </tbody>
+          </table>
+          <h3>결과 주요 필드</h3>
+          <pre><code>{
+  "status": "complete",
+  "success": true,
+  "request_id": "req_...",
+  "json": {
+    "pages": [
+      {
+        "page_number": 1,
+        "width": 1600,
+        "height": 900,
+        "blocks": [
+          {"label": "text", "bbox": [118, 130, 886, 194], "text": "..."}
+        ]
+      }
+    ]
+  },
+  "markdown": "...",
+  "html": "...",
+  "chunks": []
+}</code></pre>
+
+          <h2 id="files">Files</h2>
+          <p>파일을 먼저 저장해두면 문서 생성, 변환, 분할, 구조화 추출, batch run에서 같은 파일을 재사용할 수 있습니다.</p>
+          <pre><code>curl -X POST "$BASE_URL/api/v1/files" \
+  -F "file=@sample.pdf"
+
+curl "$BASE_URL/api/v1/files"
+curl "$BASE_URL/api/v1/files/{file_id}/metadata"
+curl "$BASE_URL/api/v1/files/{file_id}/download"</code></pre>
+
+          <h3>Upload slot 방식</h3>
+          <pre><code>curl -X POST "$BASE_URL/api/v1/files/request_upload_url" \
+  -H "content-type: application/json" \
+  -d "{\"file_name\":\"sample.pdf\",\"content_type\":\"application/pdf\"}"
+
+curl -X PUT "$BASE_URL/api/v1/files/uploads/{upload_id}" \
+  --data-binary "@sample.pdf"
+
+curl "$BASE_URL/api/v1/files/uploads/{upload_id}/confirm"</code></pre>
+
+          <h2 id="documents">Documents</h2>
+          <p>Document API는 파일 record를 문서 단위로 관리하고, 변환/분할/추출 흐름의 기준 ID를 제공합니다.</p>
+          <ol class="docs-steps">
+            <li><strong>파일 등록</strong><span><code>POST /api/v1/files</code>로 <code>file_id</code>를 받습니다.</span></li>
+            <li><strong>문서 생성</strong><span><code>POST /api/v1/create_document</code>로 <code>document_id</code>를 만듭니다.</span></li>
+            <li><strong>문서 변환</strong><span><code>POST /api/v1/convert_document</code>로 JSON/Markdown/HTML/chunks를 생성합니다.</span></li>
+            <li><strong>문서 분할</strong><span><code>POST /api/v1/segment_document</code>로 기사/섹션 단위 결과를 만듭니다.</span></li>
+          </ol>
+          <pre><code>curl -X POST "$BASE_URL/api/v1/create_document" \
+  -H "content-type: application/json" \
+  -d "{\"file_id\":\"file_...\"}"
+
+curl "$BASE_URL/api/v1/create_document/{request_id}"
+
+curl -X POST "$BASE_URL/api/v1/convert_document" \
+  -H "content-type: application/json" \
+  -d "{\"document_id\":\"doc_...\",\"output_format\":\"json,markdown\"}"
+
+curl -X POST "$BASE_URL/api/v1/segment_document" \
+  -H "content-type: application/json" \
+  -d "{\"document_id\":\"doc_...\",\"page_range\":\"0\"}"</code></pre>
+
+          <h2 id="extraction">Extraction</h2>
+          <p>구조화 추출은 OCR 텍스트와 문서 분할 결과를 기반으로 필드 값을 찾습니다. 현재 구현은 rule-first 방식입니다.</p>
+          <pre><code>curl -X POST "$BASE_URL/api/v1/generate_extraction_schemas" \
+  -H "content-type: application/json" \
+  -d "{\"field_names\":[\"title\",\"summary\",\"document_date\"]}"
+
+curl "$BASE_URL/api/v1/generate_extraction_schemas/{request_id}"
+
+curl -X POST "$BASE_URL/api/v1/extract_structured_data" \
+  -H "content-type: application/json" \
+  -d "{\"document_id\":\"doc_...\",\"schema\":{\"name\":\"report\",\"fields\":[{\"name\":\"title\"},{\"name\":\"summary\"}]}}"
+
+curl "$BASE_URL/api/v1/extract_structured_data/{request_id}"</code></pre>
+
+          <h3>평가</h3>
+          <pre><code>curl -X POST "$BASE_URL/api/v1/score_extraction_results" \
+  -H "content-type: application/json" \
+  -d "{\"predicted\":{\"title\":\"A\"},\"reference\":{\"title\":\"A\"},\"rubric_id\":1}"</code></pre>
+
+          <h2 id="workflows">Workflows</h2>
+          <p>워크플로우는 <code>ocr</code>, <code>marker_parse</code> 같은 step을 저장하고 실행하는 경량 orchestration API입니다.</p>
+          <pre><code>curl "$BASE_URL/api/v1/workflows/step_types"
+
+curl -X POST "$BASE_URL/api/v1/workflows/workflows" \
+  -H "content-type: application/json" \
+  -d "{\"name\":\"OCR Workflow\",\"steps\":[{\"step_key\":\"ocr\",\"unique_name\":\"ocr_step\",\"settings\":{\"max_pages\":1}}]}"
+
+curl -X POST "$BASE_URL/api/v1/workflows/workflows/{workflow_id}/execute" \
+  -H "content-type: application/json" \
+  -d "{\"input_config\":{\"file_urls\":[\"C:/path/sample.pdf\"]}}"
+
+curl "$BASE_URL/api/v1/workflows/executions/{execution_id}"</code></pre>
+
+          <h2 id="batch">Collections & Batch</h2>
+          <p>여러 파일을 한 번에 처리하려면 컬렉션을 만든 뒤 batch run을 시작합니다. 현재 batch operation은 <code>convert_document</code>, <code>segment_document</code>, <code>extract_structured_data</code>를 지원합니다.</p>
+          <pre><code>curl -X POST "$BASE_URL/api/v1/collections" \
+  -H "content-type: application/json" \
+  -d "{\"name\":\"demo-set\",\"file_ids\":[\"file_1\",\"file_2\"]}"
+
+curl -X POST "$BASE_URL/api/v1/batch_runs" \
+  -H "content-type: application/json" \
+  -d "{\"collection_id\":1,\"operation\":\"convert_document\",\"params\":{\"output_format\":\"json\"}}"
+
+curl "$BASE_URL/api/v1/batch_runs/{batch_run_id}/results"</code></pre>
+
+          <h2 id="templates">Templates & Eval</h2>
+          <p>템플릿과 평가 루브릭은 OCR 결과를 반복 처리하거나 추출 결과를 평가할 때 쓰는 로컬 JSON 기반 관리 API입니다.</p>
+          <pre><code>curl -X POST "$BASE_URL/api/v1/templates/promote" \
+  -H "content-type: application/json" \
+  -d "{\"name\":\"보고서 템플릿\",\"kind\":\"form\",\"content\":{\"template_text\":\"제목={{ title }}\"}}"
+
+curl -X POST "$BASE_URL/api/v1/eval_rubrics" \
+  -H "content-type: application/json" \
+  -d "{\"name\":\"기본 루브릭\",\"weights\":{\"title\":2,\"summary\":1}}"</code></pre>
+
+          <h2 id="assets">Images & Downloads</h2>
+          <p>제품 OCR API의 marker 결과는 JSON/Markdown/HTML/chunks를 반환합니다. 이미지 파일까지 포함해 전달해야 할 때는 체험 UI 보조 download endpoint가 ZIP을 생성합니다.</p>
+          <pre><code>curl -X POST "$BASE_URL/playground/api/convert/start" \
+  -F "file=@sample.pdf" \
+  -F "page_range=0"
+
+curl "$BASE_URL/playground/api/convert/{request_id}"</code></pre>
+          <pre><code>curl -o result.zip \
+  "$BASE_URL/playground/api/download/{request_id}"</code></pre>
+          <pre><code>result.json
+result.md
+result.html
+README.txt
+images/page-0001.png
+images/page-0001-image-0001.png</code></pre>
+
+          <h2 id="errors">Errors</h2>
+          <table>
+            <thead><tr><th>Status</th><th>상황</th><th>대응</th></tr></thead>
+            <tbody>
+              <tr><td><code>400</code></td><td>잘못된 mode/page_range, 빈 파일, 필수 입력 누락</td><td>요청 필드와 파일 확인</td></tr>
+              <tr><td><code>404</code></td><td>없는 request/file/document/template ID</td><td>ID와 결과 보존 기간 확인</td></tr>
+              <tr><td><code>413</code></td><td>체험 UI 업로드 크기 제한 초과</td><td>문서 분할 또는 운영 제한 조정</td></tr>
+              <tr><td><code>422</code></td><td>FastAPI validation 오류</td><td>JSON/body 타입 확인</td></tr>
+              <tr><td><code>503</code></td><td>OCR 서비스 준비 전</td><td>health와 vLLM/OCR worker 확인</td></tr>
+            </tbody>
+          </table>
+
+          <h2 id="runtime-settings">Runtime Settings</h2>
+          <p>자주 바꾸는 timeout, playground 제한, 국회 API 연동 주소는 이미지 재빌드 없이 런타임 설정 파일에 저장할 수 있습니다. 배포 기본 경로는 <code>/data/runtime/runtime-config/settings.json</code>입니다. 설정 변경은 <code>/playground/admin</code> 관리자 페이지 또는 관리자 세션을 가진 API 요청에서만 허용됩니다.</p>
+          <pre><code>curl -c cookies.txt -X POST "$BASE_URL/playground/api/auth/login" \
+  -H "content-type: application/json" \
+  -d "{\"username\":\"admin\",\"password\":\"&lt;admin-password&gt;\"}"
+
+curl -b cookies.txt -X PUT "$BASE_URL/playground/api/admin/runtime-settings" \
+  -H "content-type: application/json" \
+  -d "{\"values\":{\"ocr_service_timeout_sec\":300,\"playground_default_max_pages\":20,\"target_api_timeout_sec\":60}}"</code></pre>
+          <table>
+            <thead><tr><th>Key</th><th>적용</th><th>설명</th></tr></thead>
+            <tbody>
+              <tr><td><code>ocr_service_url</code></td><td>새 요청</td><td>app/playground가 호출할 OCR API upstream 주소</td></tr>
+              <tr><td><code>ocr_service_mode</code></td><td>새 요청</td><td><code>native</code> 또는 <code>datalab_marker</code> 호환 호출 방식</td></tr>
+              <tr><td><code>ocr_service_timeout_sec</code></td><td>새 요청</td><td>OCR API/worker 응답 대기 시간</td></tr>
+              <tr><td><code>ocr_max_concurrent_requests</code></td><td>새 요청</td><td>OCR 모델 진입 동시성 gate</td></tr>
+              <tr><td><code>pdf_render_dpi</code></td><td>새 요청</td><td>PDF 페이지 이미지 렌더링 DPI</td></tr>
+              <tr><td><code>chandra_prompt_type</code></td><td>새 요청</td><td>Chandra OCR prompt type</td></tr>
+              <tr><td><code>chandra_batch_size</code></td><td>새 요청</td><td>HF/local runner batch size</td></tr>
+              <tr><td><code>playground_default_max_pages</code></td><td>즉시</td><td>체험 UI 기본 최대 쪽수</td></tr>
+              <tr><td><code>playground_max_upload_mb</code></td><td>즉시</td><td>체험 UI 업로드 제한</td></tr>
+              <tr><td><code>playground_upstream_base_url</code></td><td>새 요청</td><td>분리 playground proxy가 호출할 OCR API 주소</td></tr>
+              <tr><td><code>llm_base_url</code></td><td>새 요청</td><td>국회 기사 후처리 LLM base URL</td></tr>
+              <tr><td><code>llm_model</code></td><td>새 요청</td><td>국회 기사 후처리 LLM 모델명</td></tr>
+              <tr><td><code>watch_poll_interval_sec</code></td><td>다음 loop</td><td>국회 OCR 감시 폴더 polling 간격</td></tr>
+              <tr><td><code>target_api_base_url</code></td><td>새 전송</td><td>국회 OCR 결과 전송 대상 API</td></tr>
+              <tr><td><code>target_api_timeout_sec</code></td><td>새 전송</td><td>국회 API 전송 timeout</td></tr>
+              <tr><td><code>vllm_api_base</code></td><td>새 요청</td><td>OCR 서비스가 호출할 vLLM 주소</td></tr>
+              <tr><td><code>vllm_model_name</code></td><td>vLLM 재시작</td><td>vLLM served-model-name</td></tr>
+              <tr><td><code>vllm_model_path</code></td><td>vLLM 재시작</td><td>vLLM이 로드할 모델 경로</td></tr>
+              <tr><td><code>vllm_max_num_seqs</code></td><td>vLLM 재시작</td><td>vLLM 동시 sequence 수</td></tr>
+              <tr><td><code>vllm_max_model_len</code></td><td>vLLM 재시작</td><td>vLLM 실행 인자</td></tr>
+              <tr><td><code>vllm_gpu_memory_utilization</code></td><td>vLLM 재시작</td><td>vLLM 실행 인자</td></tr>
+              <tr><td><code>vllm_mm_processor_kwargs</code></td><td>vLLM 재시작</td><td>이미지 pixel limit 등 multi-modal processor 인자</td></tr>
+            </tbody>
+          </table>
+
+          <h2 id="production">운영 체크리스트</h2>
+          <ul>
+            <li><code>OCR_MAX_CONCURRENT_REQUESTS=1</code>은 단일 vLLM/GPU 기준 안전한 기본값입니다.</li>
+            <li>동시에 2-5명이 써도 요청 결과는 <code>request_id</code>별로 분리되고, 모델 호출은 gate를 통과합니다.</li>
+            <li>처리량을 늘릴 때는 vLLM <code>--max-num-seqs</code>, GPU 메모리, max pages, page range 제한을 함께 조정합니다.</li>
+            <li>운영 공개 시 API key, gateway rate limit, upload size limit, request cleanup 정책을 설정합니다.</li>
+            <li>연동 문서는 <code>/openapi.json</code>과 이 Guide가 같은 구현 상태를 가리키는지 배포 전 확인합니다.</li>
+          </ul>
+        </article>
+
+        <aside class="code-rail">
+          <div class="code-card">
+            <div class="code-card-title">Recommended Flow</div>
+            <pre><code>POST /api/v1/marker
+GET  /api/v1/marker/{request_id}</code></pre>
+          </div>
+          <div class="code-card">
+            <div class="code-card-title">Reusable File Flow</div>
+            <pre><code>POST /api/v1/files
+POST /api/v1/create_document
+POST /api/v1/convert_document
+POST /api/v1/extract_structured_data</code></pre>
+          </div>
+          <div class="code-card">
+            <div class="code-card-title">Implemented Only</div>
+            <pre><code>Source of truth:
+GET /openapi.json
+
+Not listed:
+unimplemented Datalab-only APIs</code></pre>
+          </div>
+        </aside>
+      </main>
+    </section>
+  </div>
+</body>
+</html>

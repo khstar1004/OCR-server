@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ page_title }} | A-Congress OCR</title>
-  <link rel="stylesheet" href="{{ request.url_for('demo_static', asset_path='demo.css') }}?v=20260402">
-  <script defer src="{{ request.url_for('demo_static', asset_path='htmx-lite.js') }}?v=20260402"></script>
+  <title>{{ page_title }} | 에이콩 문서 읽기</title>
+  <link rel="stylesheet" href="{{ static_asset('demo.css') }}">
+  <script defer src="{{ static_asset('htmx-lite.js') }}"></script>
 </head>
 <body>
   <div class="shell">

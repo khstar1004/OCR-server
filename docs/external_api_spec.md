@@ -3,11 +3,11 @@
 기준 코드:
 
 - 저장소 HEAD
-- 작성 기준일: 2026-04-07
+- 작성 기준일: 2026-04-30
 
 이 문서는 외부 PC에서 이 시스템을 연동할 때 필요한 API 계약을 정리한다.
 
-- 메인 앱 API: 신문 PDF 작업 실행, 상태 조회, 결과 조회, callback 수신
+- 메인 앱 API: 신문 PDF/이미지 작업 실행, 상태 조회, 결과 조회, callback 수신
 - OCR 서비스 API: 이미지/PDF OCR, Datalab 호환 OCR/Marker API
 
 ## 1. 기본 접속 정보
@@ -43,10 +43,10 @@
 4. 완료 후 `GET /api/v1/jobs/{job_id}/result` 수신
 5. `callback_url`을 넣었다면 서버가 최종 기사들을 `/news` 형식으로 별도 POST
 
-단일 PDF 업로드 방식:
+단일 파일 업로드 방식:
 
 1. `POST /api/v1/jobs/run-single?file_name=...`
-2. raw PDF body 전송
+2. raw PDF 또는 이미지 body 전송
 3. 이후 흐름은 동일
 
 ### 2.2 엔드포인트 요약
@@ -54,11 +54,14 @@
 | Method | Path | 용도 |
 | --- | --- | --- |
 | `GET` | `/api/v1/health` | 메인 런타임 liveness |
+| `GET` | `/api/v1/ready` | DB/경로/전송 설정 readiness |
 | `POST` | `/api/v1/jobs/run-daily` | 디렉터리 기반 작업 등록 |
-| `POST` | `/api/v1/jobs/run-single` | 단일 PDF raw 업로드 작업 등록 |
+| `POST` | `/api/v1/jobs/run-single` | 단일 PDF/이미지 raw 업로드 작업 등록 |
 | `GET` | `/api/v1/jobs/{job_id}` | 간단 상태 조회 |
 | `GET` | `/api/v1/jobs/{job_id}/detail` | 상세 진행률 조회 |
 | `GET` | `/api/v1/jobs/{job_id}/result` | 최종 결과 조회 |
+| `GET` | `/api/v1/jobs/{job_id}/news-payload` | 국회 `/news` 전송 payload 사전검증 |
+| `POST` | `/api/v1/jobs/{job_id}/deliver` | 작업 전체 국회 `/news` 재전송 |
 | `GET` | `/api/v1/jobs/{job_id}/pages/{page_id}/preview` | 페이지 overlay/기사 preview |
 | `GET` | `/api/v1/jobs/{job_id}/pages/{page_id}/image` | 원본 페이지 이미지 |
 | `GET` | `/api/v1/jobs/{job_id}/article-images/{image_id}` | 기사 이미지 crop |
@@ -75,7 +78,7 @@
 
 ### 2.4 `POST /api/v1/jobs/run-daily`
 
-디렉터리 내 PDF들을 찾아 작업을 큐에 넣는다.
+디렉터리 내 PDF/PNG/JPG/WEBP 입력 파일을 찾아 작업을 큐에 넣는다.
 
 Request body:
 
@@ -93,7 +96,7 @@ Request body:
 - `source_dir`: 선택. 서버가 접근 가능한 디렉터리 경로. 비우면 서버 기본 `INPUT_ROOT` 사용.
 - `date`: 선택. `YYYY-MM-DD`. 현재 코드에서는 스캔 필터가 아니라 작업 메타데이터로만 저장된다.
 - `callback_url`: 선택. 작업 종료 시 `/news` endpoint로 multipart 기사 payload를 POST할 URL.
-- `force_reprocess`: 선택. 기본 `false`. `false`면 기존 완료 PDF와 동일 hash는 `duplicate_hash`로 skip될 수 있다.
+- `force_reprocess`: 선택. 기본 `false`. `false`면 기존 완료 파일과 동일 hash는 `duplicate_hash`로 skip될 수 있다.
 
 성공 응답:
 
@@ -125,17 +128,22 @@ curl -X POST "http://<HOST>:18007/api/v1/jobs/run-daily" \
 
 ### 2.5 `POST /api/v1/jobs/run-single`
 
-PDF 1개를 HTTP body로 직접 업로드해서 작업을 큐에 넣는다.
+PDF 또는 이미지 1개를 HTTP body로 직접 업로드해서 작업을 큐에 넣는다. 암호화 PDF 때문에 서버 렌더링이 막히는 경우, 클라이언트에서 페이지를 이미지로 변환한 뒤 이 API에 넣으면 같은 기사 분할/국회 전송 파이프라인을 탄다.
 
 Query params:
 
-- `file_name`: 필수. `.pdf` 확장자 필요
+- `file_name`: 필수. `.pdf`, `.png`, `.jpg`, `.jpeg`, `.webp` 확장자 필요
 - `force_reprocess`: 선택. 기본 `true`
+- `ocr_mode`: 선택. `fast`, `balanced`, `accurate`
+- `page_range`: 선택. 예: `0,2-4`
+- `max_pages`: 선택. 최대 처리 페이지 수
+- `output_format`: 선택. 예: `markdown`, `json,markdown,html,chunks`
+- `paginate`, `add_block_ids`, `include_markdown_in_chunks`, `skip_cache`: 선택. Datalab-style marker 옵션
 
 요청 본문:
 
 - `multipart/form-data`가 아니라 raw binary body
-- 본문 전체가 PDF bytes여야 한다
+- 본문 전체가 PDF 또는 이미지 bytes여야 한다
 - 현재 `callback_url` 파라미터는 지원하지 않는다. 이 경로는 polling 기반으로만 결과 회수 가능하다.
 
 성공 응답:
@@ -152,8 +160,11 @@ Query params:
 주요 오류:
 
 - `400`: `file_name` 없음
-- `400`: `.pdf` 아님
+- `400`: 지원하지 않는 확장자
 - `400`: 빈 body
+- `400`: 본문 첫 1024 bytes 안에 PDF header가 없음
+- `400`: 이미지 파일 검증 실패
+- `413`: 업로드가 512 MiB를 초과함
 
 예시:
 
@@ -161,6 +172,14 @@ Query params:
 curl -X POST "http://<HOST>:18007/api/v1/jobs/run-single?file_name=0213-seoggan.pdf&force_reprocess=true" \
   -H "Content-Type: application/pdf" \
   --data-binary "@0213-seoggan.pdf"
+```
+
+암호화 PDF를 페이지 이미지로 우회하는 예:
+
+```bash
+curl -X POST "http://<HOST>:18007/api/v1/jobs/run-single?file_name=0213-seoggan-page-001.png&force_reprocess=true" \
+  -H "Content-Type: image/png" \
+  --data-binary "@0213-seoggan-page-001.png"
 ```
 
 ### 2.6 `GET /api/v1/jobs/{job_id}`
@@ -265,6 +284,7 @@ curl -X POST "http://<HOST>:18007/api/v1/jobs/run-single?file_name=0213-seoggan.
     - `title_bbox`, `article_bbox`
     - `relevance_score`, `relevance_reason`, `relevance_label`, `relevance_model`, `relevance_source`
     - `source_metadata`
+    - `delivery_status`, `delivery_response_code`, `delivery_last_error`, `delivery_updated_at`, `delivery_request_available`
     - `images[]`
     - `bundle_dir`, `markdown_path`, `metadata_path`
 
@@ -298,6 +318,11 @@ curl -X POST "http://<HOST>:18007/api/v1/jobs/run-single?file_name=0213-seoggan.
           "relevance_label": "relevant",
           "relevance_model": "gpt-oss-20b",
           "relevance_source": "llm",
+          "delivery_status": "delivered",
+          "delivery_response_code": 201,
+          "delivery_last_error": null,
+          "delivery_updated_at": "2026-04-07T00:18:10+00:00",
+          "delivery_request_available": true,
           "source_metadata": {
             "publication": "국방일보",
             "issue_date": "2026-04-07",
@@ -372,7 +397,48 @@ curl "http://<HOST>:18007/api/v1/jobs/job_20260407_091530/pages/201/preview?over
 
 응답은 JSON이 아니라 이미지 바이너리다.
 
-### 2.11 delivery 계약
+### 2.11 `GET /api/v1/jobs/{job_id}/news-payload`
+
+실제 국회 `/news` API로 전송하기 전에 서버가 구성한 payload를 미리 확인한다. 외부 전송은 수행하지 않는다.
+
+응답 주요 필드:
+
+- `target_url`, `target_configured`
+- `article_count`
+- `included_image_count`, `skipped_image_count`
+- `articles[].request_article`: 실제 `body` 배열에 들어갈 기사 객체
+- `articles[].images[]`: 이미지 포함 여부, 파일 크기, 누락 사유
+- `body`: multipart form field `body`에 들어갈 JSON 배열
+
+예시:
+
+```bash
+curl "http://<HOST>:18007/api/v1/jobs/job_20260407_091530/news-payload"
+```
+
+### 2.12 `POST /api/v1/jobs/{job_id}/deliver`
+
+작업 전체 기사 payload를 현재 `TARGET_API_BASE_URL` 기준 국회 `/news` API로 다시 전송한다.
+
+성공 응답:
+
+```json
+{
+  "job_id": "job_20260407_091530",
+  "target_url": "http://target.example/news",
+  "delivered": 12,
+  "failed": 0,
+  "skipped": 0
+}
+```
+
+주요 오류:
+
+- `404`: job 없음
+- `409`: `TARGET_API_BASE_URL` 미설정 또는 전송 가능한 기사 없음
+- `502`: 대상 API 호출 실패
+
+### 2.13 delivery 계약
 
 `run-daily`에서 `callback_url`을 넣으면, 작업 종료 시 서버가 아래를 수행한다.
 
@@ -413,7 +479,7 @@ curl "http://<HOST>:18007/api/v1/jobs/job_20260407_091530/pages/201/preview?over
 - `201` 또는 `2xx` 응답
 - validation 실패 시 `error_code`, `index`, `child_index`
 
-### 2.12 메인 앱 상태값
+### 2.14 메인 앱 상태값
 
 `job.status`:
 
@@ -662,13 +728,20 @@ Request:
 - 파일 필드:
   - `file`
   - 또는 `file.0`
+  - 또는 `file_url`
 - 추가 form fields:
   - `page_number`
   - `width`, `height`
   - `dpi`
   - `max_pages`
   - `page_range`
-  - `output_format`: `json`, `markdown`, `html`, `chunks`
+  - `mode`: `fast`, `balanced`, `accurate` (`balanced` 기본)
+  - `output_format`: `json`, `markdown`, `html`, `chunks` 또는 `markdown,html` 같은 복수 포맷
+  - `paginate`
+  - `add_block_ids`
+  - `include_markdown_in_chunks`
+  - `skip_cache`
+  - `extras`, `additional_config`
 
 제출 응답 형식은 `/api/v1/ocr`와 동일하다.
 
@@ -681,6 +754,7 @@ Request:
 - `status`
 - `success`
 - `output_format`
+- `output_formats`
 - `markdown`
 - `html`
 - `json`
@@ -693,6 +767,8 @@ Request:
     - `articles[]`
     - `unassigned[]`
 - `chunks`
+- `parse_quality_score`
+- `metadata`
 - `checkpoint_id`
 
 예시:
@@ -894,6 +970,6 @@ OCR 서비스는 OCR 외에도 아래 route group을 제공한다.
 ## 7. 코드상 주의사항
 
 - `run-daily.date`는 현재 파일 선택 필터가 아니다.
-- `run-single`은 raw PDF body API다.
+- `run-single`은 raw PDF/이미지 body API다.
 - delivery는 자동 재시도하지 않는다.
 - 현재 인증/권한 체크가 없으므로 외부망 노출 시 별도 reverse proxy 또는 네트워크 통제가 필요하다.

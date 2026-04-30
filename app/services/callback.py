@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 
 from app.core.config import get_settings
+from app.services.runtime_config import runtime_config_value
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +19,14 @@ class CallbackClient:
         if not callback_url:
             return
         try:
-            response = httpx.post(callback_url, json=payload, timeout=self.settings.callback_timeout_seconds)
+            timeout = int(
+                runtime_config_value(
+                    "callback_timeout_seconds",
+                    self.settings.callback_timeout_seconds,
+                    self.settings,
+                )
+            )
+            response = httpx.post(callback_url, json=payload, timeout=timeout)
             response.raise_for_status()
         except Exception as exc:
             logger.exception("callback failed: %s", exc)
-

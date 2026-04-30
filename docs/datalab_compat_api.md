@@ -14,10 +14,12 @@
 - `GET /health`
 - `GET /api/health`
 - `GET /api/v1/health`
+- `GET /api/v1/capabilities`
 - `POST /api/v1/ocr`
 - `GET /api/v1/ocr/{request_id}`
 - `POST /api/v1/marker`
 - `GET /api/v1/marker/{request_id}`
+- `DELETE /api/v1/requests`
 - `GET /api/v1/thumbnails/{lookup_key}`
 - `GET /api/v1/workflows/step_types`
 - `GET /api/v1/workflows/workflows`
@@ -68,31 +70,28 @@
 
 - `ocr` 결과는 페이지별 `lines`, `blocks`, raw OCR payload를 반환한다.
 - `marker` 결과는 페이지별 `blocks`, `articles`, `markdown`, `html`, `json`, `chunks`를 함께 반환한다.
+- `marker` 제출은 Datalab Marker의 핵심 form 옵션인 `mode`, `max_pages`, `page_range`, 복수 `output_format`, `paginate`, `add_block_ids`, `include_markdown_in_chunks`, `skip_cache`, `file_url`을 받는다.
+- `extras`, `additional_config`는 호환 요청을 깨지 않도록 수신하고 결과 `metadata`에 기록하지만, 현 단계에서는 별도 후처리 엔진을 실행하지 않는다.
+- 완료/실패 결과에는 `runtime` 객체를 넣어 `request_id`, 종류, 파일명, 파일 크기, 시작/종료 시각, 처리 시간, 페이지 수, 오류 코드를 추적한다.
+- 오래된 요청 보관함은 `DELETE /api/v1/requests?older_than_hours=24&status_filter=complete&dry_run=true`로 먼저 후보를 확인한 뒤 `dry_run=false`로 삭제한다.
 - `thumbnails`는 기존 request 결과에서 생성된 페이지 이미지를 다시 썸네일로 변환한다.
 - workflow 실행 입력은 현재 `input_config.file_url` 또는 `input_config.file_urls`만 지원한다.
 - `file_url`은 로컬 절대경로, `file://`, `http(s)://`를 허용한다.
 - file/template/collection/batch/eval_rubric은 모두 로컬 JSON/파일시스템 기반 저장소를 사용한다.
 - structured extraction은 현재 rule-first 방식이며 field `label`, `pattern`을 줄수록 정확도가 올라간다.
 
-## 아직 미구현
+## 제한사항
 
-아래는 이번 단계에서 의도적으로 넣지 않았다.
+아래 기능은 상용 Datalab API의 전체 동작을 복제하지 않고, 현재 Chandra OCR/국회 기사 처리 파이프라인에 맞춘 로컬 구현으로 제공한다.
 
-- Generate Extraction Schemas
-- Form Filling
-- Create Document
-- Convert Document
-- Extract Structured Data
-- Score Extraction Results
-- Segment Document
-- Run Custom Pipeline
-- Track Changes
-- Template/File/Eval Rubric/Collection/Batch Run 계열
-
-이 항목들은 API 수가 많아서가 아니라, 현재 저장소에 해당 도메인 로직과 저장 모델이 없기 때문에 바로 추가하면 유지보수 비용만 커진다.
+- Generate Extraction Schemas, Form Filling, Track Changes는 JSON/text 기반 보조 기능이다.
+- Create/Convert/Segment/Extract/Score는 파일 저장소와 현재 OCR 결과를 기준으로 동작한다.
+- Template/File/Eval Rubric/Collection/Batch Run 계열은 로컬 JSON/파일시스템 저장소를 사용한다.
+- custom pipeline 실행기는 아직 범용 DAG 엔진이 아니며, 현재 등록된 workflow step 중심으로 제한된다.
 
 ## 권장 확장 순서
 
-1. `marker_parse` 뒤에 `extract_structured_data`를 붙일 수 있도록 checkpoint 기반 저장 모델 추가
-2. 파일 업로드/참조 체계(`datalab://file-...`) 도입
-3. custom pipeline/template/eval_rubric을 workflow 정의 저장소 위에 확장
+1. `runtime`/`metadata`를 운영 로그와 연결해 처리시간, 실패율, 페이지당 비용을 대시보드화
+2. 국회 기사 전송 payload의 사전검증 결과를 운영 승인 단계와 연결
+3. 파일 업로드/참조 체계(`datalab://file-...`)를 외부 client 계약으로 고정
+4. custom pipeline/template/eval_rubric을 workflow 정의 저장소 위에 확장

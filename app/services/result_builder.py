@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+import json
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,9 @@ from app.schemas.job import (
     ArticleSourceMetadataResponse,
     FileResultResponse,
     JobDetailResponse,
+    JobQualityResponse,
     JobResultResponse,
+    OcrQualityResponse,
     JobStageResponse,
     JobStatusResponse,
     PageProgressResponse,
@@ -36,8 +39,8 @@ def get_pipeline_stage_labels() -> tuple[tuple[str, str], ...]:
     fallback_label = "Fallback OCR (미사용)"
 
     return (
-        ("scan", "PDF 탐색 / 해시"),
-        ("render", "PDF 렌더링"),
+        ("scan", "입력 파일 탐색 / 해시"),
+        ("render", "PDF 렌더링 / 이미지 정규화"),
         ("ocr_vl", primary_label),
         ("ocr_structure", structure_label),
         ("ocr_fallback", fallback_label),
@@ -66,6 +69,7 @@ def build_job_status(db: Session, job: Job) -> JobStatusResponse:
 
 
 def build_job_detail(db: Session, job: Job) -> JobDetailResponse:
+    storage = OutputStorage()
     pipeline_stage_labels = get_pipeline_stage_labels()
     valid_stage_keys = [stage_key for stage_key, _ in pipeline_stage_labels]
     pdf_files = list(db.scalars(select(PdfFile).where(PdfFile.job_id == job.id).order_by(PdfFile.id)))
@@ -121,13 +125,21 @@ def build_job_detail(db: Session, job: Job) -> JobDetailResponse:
         )
     }
     pages_by_pdf: dict[int, list[PageProgressResponse]] = {}
+    quality_payloads: list[dict[str, Any]] = []
+    pdf_names_for_pages = {pdf_file.id: pdf_file.file_name for pdf_file in pdf_files}
     for page in page_rows:
+        page_quality = _read_page_quality(storage, job.job_key, pdf_names_for_pages.get(page.pdf_file_id, ""), page.page_number)
+        if page_quality:
+            quality_payloads.append(page_quality)
         pages_by_pdf.setdefault(page.pdf_file_id, []).append(
             PageProgressResponse(
                 page_id=page.id,
                 page_number=page.page_number,
                 status=page.parse_status,
                 article_count=page_article_counts.get(page.id, 0),
+                quality_status=(_clean_text(page_quality.get("status")) or None) if page_quality else None,
+                quality_score=_as_float(page_quality.get("score")) if page_quality else None,
+                quality_reasons=[str(item) for item in page_quality.get("reasons", [])] if page_quality else [],
             )
         )
     stage_logs = list(
@@ -184,6 +196,7 @@ def build_job_detail(db: Session, job: Job) -> JobDetailResponse:
         failed_pdfs=job.failed_files,
         total_articles=job.total_articles,
         progress_percent=progress_percent,
+        quality=_build_job_quality(quality_payloads),
         stages=_build_stage_progress(stage_logs, pipeline_stage_labels),
         pdf_files=[
             PdfProgressResponse(
@@ -249,6 +262,7 @@ def _build_article_response(storage: OutputStorage, job_key: str, pdf_name: str,
         article.title,
     )
     metadata = storage.load_article_metadata(bundle_dir)
+    delivery_state = _read_delivery_state(bundle_dir)
     caption_map = caption_entries_by_image_order(metadata)
     corrected_title = _clean_text(metadata.get("corrected_title")) or None
     corrected_body_text = _clean_text(metadata.get("corrected_body_text")) or None
@@ -274,6 +288,17 @@ def _build_article_response(storage: OutputStorage, job_key: str, pdf_name: str,
         relevance_model=_clean_text(metadata.get("relevance_model")) or None,
         relevance_source=_clean_text(metadata.get("relevance_source")) or None,
         source_metadata=_build_source_metadata(metadata.get("source_metadata")),
+        ocr_quality=_build_ocr_quality(metadata.get("ocr_quality")),
+        delivery_status=_clean_text(delivery_state.get("delivery_status") or delivery_state.get("status")) or None,
+        delivery_response_code=_as_int(delivery_state.get("response_code")),
+        delivery_last_error=_clean_text(delivery_state.get("last_error") or delivery_state.get("error")) or None,
+        delivery_updated_at=_clean_text(
+            delivery_state.get("updated_at")
+            or delivery_state.get("delivered_at")
+            or delivery_state.get("attempted_at")
+        )
+        or None,
+        delivery_request_available=isinstance(delivery_state.get("request_article"), dict),
         images=[
             ArticleImageResponse(
                 image_id=image.id,
@@ -295,6 +320,84 @@ def _build_article_response(storage: OutputStorage, job_key: str, pdf_name: str,
         markdown_path=str(bundle_dir / "article.md"),
         metadata_path=str(bundle_dir / "article.json"),
     )
+
+
+def _read_page_quality(storage: OutputStorage, job_key: str, pdf_name: str, page_number: int) -> dict[str, Any]:
+    if not pdf_name:
+        return {}
+    page_path = storage.resolve_page_bundle_path(job_key, pdf_name, page_number) / "page.json"
+    if not page_path.exists():
+        return {}
+    try:
+        payload = json.loads(page_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    quality = payload.get("ocr_quality") if isinstance(payload, dict) else None
+    return quality if isinstance(quality, dict) else {}
+
+
+def _build_ocr_quality(value: Any) -> OcrQualityResponse | None:
+    if not isinstance(value, dict):
+        return None
+    status = _clean_text(value.get("status")) or "unknown"
+    score = _as_float(value.get("score"))
+    if score is None:
+        return None
+    return OcrQualityResponse(
+        status=status,
+        score=score,
+        char_count=_as_int(value.get("char_count")) or 0,
+        korean_ratio=_as_float(value.get("korean_ratio")) or 0.0,
+        average_confidence=_as_float(value.get("average_confidence")) or 0.0,
+        block_count=_as_int(value.get("block_count")) or 0,
+        image_count=_as_int(value.get("image_count")) or 0,
+        article_count=_as_int(value.get("article_count")) or 0,
+        needs_review=bool(value.get("needs_review")),
+        reasons=[str(item) for item in value.get("reasons", []) if str(item).strip()],
+    )
+
+
+def _build_job_quality(payloads: list[dict[str, Any]]) -> JobQualityResponse | None:
+    measured = [_build_ocr_quality(payload) for payload in payloads]
+    measured = [item for item in measured if item is not None]
+    if not measured:
+        return None
+    ready = sum(1 for item in measured if item.status == "ready")
+    warning = sum(1 for item in measured if item.status == "warning")
+    blocked = sum(1 for item in measured if item.status == "blocked")
+    reason_counts: dict[str, int] = {}
+    for item in measured:
+        for reason in item.reasons:
+            reason_counts[reason] = reason_counts.get(reason, 0) + 1
+    status = "ready"
+    if blocked:
+        status = "blocked"
+    elif warning:
+        status = "warning"
+    return JobQualityResponse(
+        status=status,
+        average_score=round(sum(item.score for item in measured) / len(measured), 4),
+        ready_pages=ready,
+        warning_pages=warning,
+        blocked_pages=blocked,
+        review_pages=warning + blocked,
+        measured_pages=len(measured),
+        top_reasons=[reason for reason, _count in sorted(reason_counts.items(), key=lambda item: (-item[1], item[0]))[:5]],
+    )
+
+
+def _read_delivery_state(bundle_dir: Path) -> dict[str, Any]:
+    for file_name in ("delivery.json", "demo_delivery.json"):
+        path = bundle_dir / file_name
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return {}
 
 
 def _clean_text(value: Any) -> str:
@@ -352,6 +455,15 @@ def _as_float(value: Any) -> float | None:
         return None
     try:
         return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
     except (TypeError, ValueError):
         return None
 
