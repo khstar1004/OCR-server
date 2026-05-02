@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>army-ocr Playground</title>
+  <title>Army-OCR Playground</title>
   <base href="__PLAYGROUND_BASE__">
   <link rel="stylesheet" href="assets/playground.css">
 </head>
@@ -11,8 +11,26 @@
   <div class="shell">
     <aside class="sidebar" aria-label="자료">
       <div class="brand">
-        <span class="brand-mark">a</span>
-        <span>army-ocr</span>
+        <span class="brand-mark" aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="24" height="24" focusable="false" aria-hidden="true">
+            <defs>
+              <linearGradient id="ocrGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#7C3AED" />
+                <stop offset="100%" stop-color="#2DD4BF" />
+              </linearGradient>
+            </defs>
+            <circle cx="60" cy="60" r="18" fill="none" stroke="url(#ocrGradient)" stroke-width="5" />
+            <circle cx="60" cy="60" r="6" fill="url(#ocrGradient)" />
+            <g stroke="url(#ocrGradient)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none">
+              <path d="M 35 35 L 25 35 L 25 45" />
+              <path d="M 85 35 L 95 35 L 95 45" />
+              <path d="M 25 75 L 25 85 L 35 85" />
+              <path d="M 95 75 L 95 85 L 85 85" />
+            </g>
+            <line x1="15" y1="60" x2="105" y2="60" stroke="#2DD4BF" stroke-width="2" opacity="0.6" stroke-dasharray="4 4" />
+          </svg>
+        </span>
+        <span>Army-OCR</span>
       </div>
       <div class="sidebar-product">
         <strong>Playground</strong>
@@ -44,7 +62,7 @@
           <span>서버 상태</span>
           <span class="resource-state" data-resource-state="ocr_health">확인 중</span>
         </a>
-        <a class="resource-link" href="__ADMIN_URL__" target="_blank" rel="noopener" data-resource-link="admin">
+        <a class="resource-link" href="admin" target="_blank" rel="noopener" data-resource-link="admin">
           <span>관리자</span>
           <span class="resource-state" data-resource-state="admin">로그인</span>
         </a>
@@ -68,7 +86,7 @@
 
     <section class="workspace">
       <header class="topbar">
-        <div class="top-title">army-ocr</div>
+        <div class="top-title">Army-OCR</div>
         <div class="flow-steps" aria-label="처리 단계">
           <span class="step active">문서 읽기</span>
           <span class="arrow">-></span>
@@ -161,8 +179,8 @@
             </div>
             <div class="config-row">
               <label for="pageRange">페이지 범위</label>
-              <input id="pageRange" name="page_range" value="0-9">
-              <span class="hint">기본은 10쪽까지입니다. 예: 0-9, 3, 5-7</span>
+              <input id="pageRange" name="page_range" value="">
+              <span class="hint">비워두면 PDF 전체를 처리합니다. 일부만 처리하려면 예: 0, 0-2, 3, 5-7</span>
             </div>
 
             <div class="mode-grid" role="radiogroup" aria-label="OCR 모드">
@@ -187,8 +205,8 @@
               <h2>추가 기능</h2>
               <label class="option-card">
                 <input type="checkbox" name="track_changes">
-                <span>변경 내용 보기</span>
-                <small>DOCX에서 수정 흔적을 같이 보고 싶을 때 켭니다.</small>
+                <span>수정 흔적 포함</span>
+                <small>DOCX의 변경 표시를 같이 읽고 싶을 때 켭니다.</small>
               </label>
               <label class="option-card">
                 <input type="checkbox" name="chart_understanding">
@@ -218,7 +236,6 @@
               </div>
             </details>
 
-            <input type="hidden" name="max_pages" value="10">
             <div class="actions">
               <button type="submit" id="convertButton" class="primary">문서 읽기</button>
               <span id="statusText" class="status-text"></span>
@@ -266,6 +283,47 @@
         </section>
       </main>
     </section>
+  </div>
+
+  <div class="edit-modal" id="blockEditModal" hidden>
+    <div class="edit-backdrop" data-edit-close></div>
+    <form class="edit-dialog" id="blockEditForm">
+      <header class="edit-dialog-head">
+        <div>
+          <span id="editBlockEyebrow">영역 수정</span>
+          <strong id="editBlockTitle">영역</strong>
+        </div>
+        <button type="button" class="edit-icon-button" id="closeBlockEdit" aria-label="닫기">×</button>
+      </header>
+      <label class="edit-field">
+        <span>영역 종류</span>
+        <select id="editBlockLabel"></select>
+      </label>
+      <label class="edit-field">
+        <span>텍스트</span>
+        <textarea id="editBlockText" rows="8"></textarea>
+      </label>
+      <label class="edit-field edit-table-field" id="editTableField" hidden>
+        <span>표</span>
+        <textarea id="editTableText" rows="6" spellcheck="false"></textarea>
+      </label>
+      <section class="edit-image-field" id="editImageField">
+        <div class="edit-image-head">
+          <span>이미지</span>
+          <button type="button" id="clearEditImage">직접 이미지 제거</button>
+        </div>
+        <div class="edit-image-drop" id="editImageDrop" tabindex="0">
+          <input id="editImageInput" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+          <span>이미지 파일/캡쳐 붙여넣기</span>
+          <img id="editImagePreview" alt="" hidden>
+        </div>
+      </section>
+      <footer class="edit-dialog-actions">
+        <span id="editBlockStatus" class="status-text"></span>
+        <button type="button" id="cancelBlockEdit">취소</button>
+        <button type="submit" class="primary" id="saveBlockEdit">저장</button>
+      </footer>
+    </form>
   </div>
 
   <script src="assets/playground.js"></script>

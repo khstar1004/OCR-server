@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>army-ocr 관리자</title>
+  <title>Army-OCR 관리자</title>
   <base href="__PLAYGROUND_BASE__">
   <link rel="stylesheet" href="assets/playground.css">
 </head>
@@ -11,8 +11,26 @@
   <div class="admin-shell">
     <aside class="admin-sidebar">
       <div class="brand">
-        <span class="brand-mark">a</span>
-        <span>army-ocr</span>
+        <span class="brand-mark" aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="24" height="24" focusable="false" aria-hidden="true">
+            <defs>
+              <linearGradient id="ocrGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#7C3AED" />
+                <stop offset="100%" stop-color="#2DD4BF" />
+              </linearGradient>
+            </defs>
+            <circle cx="60" cy="60" r="18" fill="none" stroke="url(#ocrGradient)" stroke-width="5" />
+            <circle cx="60" cy="60" r="6" fill="url(#ocrGradient)" />
+            <g stroke="url(#ocrGradient)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none">
+              <path d="M 35 35 L 25 35 L 25 45" />
+              <path d="M 85 35 L 95 35 L 95 45" />
+              <path d="M 25 75 L 25 85 L 35 85" />
+              <path d="M 95 75 L 95 85 L 85 85" />
+            </g>
+            <line x1="15" y1="60" x2="105" y2="60" stroke="#2DD4BF" stroke-width="2" opacity="0.6" stroke-dasharray="4 4" />
+          </svg>
+        </span>
+        <span>Army-OCR</span>
       </div>
       <nav class="admin-nav" aria-label="관리자 메뉴">
         <button type="button" class="admin-nav-item active" data-admin-pane="overviewPane">대시보드</button>
@@ -30,12 +48,33 @@
       <header class="admin-top">
         <div>
           <span>운영 관리자</span>
-          <h1>army-ocr 관리자 페이지</h1>
+          <h1>Army-OCR 관리자 페이지</h1>
         </div>
-        <div class="admin-user-pill" id="adminUserPill">확인 중</div>
+        <div class="admin-top-actions">
+          <button type="button" class="admin-soft-button" id="refreshAllButton">전체 새로고침</button>
+          <div class="admin-user-pill" id="adminUserPill">확인 중</div>
+        </div>
       </header>
 
       <section id="overviewPane" class="admin-pane">
+        <div class="admin-quick-grid" aria-label="빠른 작업">
+          <button type="button" class="admin-quick-action" data-quick-pane="usersPane" data-quick-user-status="pending">
+            <span>대기 계정 처리</span>
+            <strong id="quickPendingCount">-</strong>
+          </button>
+          <button type="button" class="admin-quick-action" data-quick-pane="settingsPane" data-quick-settings-group="ocr_api">
+            <span>OCR timeout/동시성</span>
+            <strong>설정 열기</strong>
+          </button>
+          <button type="button" class="admin-quick-action" data-quick-pane="settingsPane" data-quick-settings-group="vllm" data-quick-restart-only="true">
+            <span>vLLM 재시작 항목</span>
+            <strong id="quickRestartCount">-</strong>
+          </button>
+          <a class="admin-quick-action" href="__PLAYGROUND_URL__">
+            <span>Playground</span>
+            <strong>열기</strong>
+          </a>
+        </div>
         <div class="admin-card-grid">
           <article class="admin-stat-card">
             <span>승인 대기</span>
@@ -46,9 +85,57 @@
             <strong id="activeCount">-</strong>
           </article>
           <article class="admin-stat-card">
+            <span>정지 계정</span>
+            <strong id="suspendedCount">-</strong>
+          </article>
+          <article class="admin-stat-card">
+            <span>반려 계정</span>
+            <strong id="rejectedCount">-</strong>
+          </article>
+          <article class="admin-stat-card">
+            <span>로그인 세션</span>
+            <strong id="sessionCount">-</strong>
+          </article>
+          <article class="admin-stat-card">
+            <span>재시작 필요 설정</span>
+            <strong id="restartSettingCount">-</strong>
+          </article>
+          <article class="admin-stat-card">
             <span>설정 저장 위치</span>
             <strong id="settingsPath">-</strong>
           </article>
+        </div>
+        <div class="admin-overview-grid">
+          <section class="admin-section">
+            <div class="admin-section-head">
+              <div>
+                <h2>서비스 상태</h2>
+                <p>Playground proxy와 OCR API 연결 상태를 확인합니다.</p>
+              </div>
+              <button type="button" id="reloadOverview">새로고침</button>
+            </div>
+            <div class="admin-kv-list">
+              <div><span>OCR API</span><strong id="serviceState">확인 중</strong></div>
+              <div><span>OCR 엔진</span><strong id="ocrBackendState">-</strong></div>
+              <div><span>동시 OCR gate</span><strong id="concurrencyState">-</strong></div>
+              <div><span>계정 저장소</span><strong id="authStorePath">-</strong></div>
+              <div><span>설정 갱신</span><strong id="settingsUpdatedAt">-</strong></div>
+            </div>
+          </section>
+          <section class="admin-section">
+            <div class="admin-section-head">
+              <div>
+                <h2>재시작 안내</h2>
+                <p>저장값 중 vLLM 실행 인자는 vLLM 프로세스 재시작 뒤 반영됩니다.</p>
+              </div>
+            </div>
+            <div class="admin-command-list">
+              <button type="button" class="copy-command" data-command="docker compose --profile remote-ocr restart vllm-ocr">Docker vLLM 재시작 복사</button>
+              <button type="button" class="copy-command" data-command="kubectl -n nocodeaidev rollout restart deploy/a-cong-vllm-ocr">K8S vLLM 재시작 복사</button>
+              <button type="button" class="copy-command" data-command="docker compose up -d --build app playground">UI/API 이미지 재빌드 복사</button>
+            </div>
+            <p class="admin-inline-status" id="commandCopyStatus"></p>
+          </section>
         </div>
         <section class="admin-section">
           <div class="admin-section-head">
@@ -69,9 +156,32 @@
         <div class="admin-section-head">
           <div>
             <h2>계정 승인</h2>
-            <p>사용자 신청을 검토하고 승인 또는 반려합니다.</p>
+            <p>사용자 신청을 검토하고 승인, 정지, 재활성화합니다.</p>
           </div>
           <button type="button" id="reloadUsers">새로고침</button>
+        </div>
+        <div class="admin-status-tabs" aria-label="계정 상태 필터">
+          <button type="button" data-user-status-chip="pending">대기 <strong id="chipPendingCount">0</strong></button>
+          <button type="button" data-user-status-chip="active">활성 <strong id="chipActiveCount">0</strong></button>
+          <button type="button" data-user-status-chip="suspended">정지 <strong id="chipSuspendedCount">0</strong></button>
+          <button type="button" data-user-status-chip="rejected">반려 <strong id="chipRejectedCount">0</strong></button>
+          <button type="button" class="active" data-user-status-chip="all">전체</button>
+        </div>
+        <div class="admin-filter-bar">
+          <label>
+            <span>검색</span>
+            <input id="userSearchInput" type="search" placeholder="아이디, 이름, 이메일">
+          </label>
+          <label>
+            <span>상태</span>
+            <select id="userStatusFilter">
+              <option value="all">전체</option>
+              <option value="pending">승인 대기</option>
+              <option value="active">활성</option>
+              <option value="suspended">정지</option>
+              <option value="rejected">반려</option>
+            </select>
+          </label>
         </div>
         <div id="usersList" class="admin-user-list" aria-live="polite"></div>
       </section>
@@ -80,9 +190,50 @@
         <div class="admin-section-head">
           <div>
             <h2>운영 설정</h2>
-            <p>OCR API, Chandra, playground, vLLM 값을 runtime JSON으로 저장합니다.</p>
+            <p>OCR API, Army-OCR, playground, vLLM 값을 runtime JSON으로 저장합니다.</p>
           </div>
           <button type="button" id="reloadAdminSettings">새로고침</button>
+        </div>
+        <div class="admin-settings-summary">
+          <div><span>전체 설정</span><strong id="settingCount">-</strong></div>
+          <div><span>저장 override</span><strong id="settingOverrideCount">-</strong></div>
+          <div><span>재시작 필요 override</span><strong id="settingRestartOverrideCount">-</strong></div>
+        </div>
+        <section class="admin-preset-panel">
+          <div>
+            <h3>운영 프리셋</h3>
+            <p>클릭하면 값만 채워집니다. 반영하려면 아래에서 설정 저장을 누르세요.</p>
+          </div>
+          <div class="admin-preset-grid">
+            <button type="button" data-settings-preset="stable">안정 운영</button>
+            <button type="button" data-settings-preset="preview">체험 확대</button>
+            <button type="button" data-settings-preset="assembly">국회 연동 대기</button>
+          </div>
+        </section>
+        <div class="admin-filter-bar">
+          <label>
+            <span>설정 검색</span>
+            <input id="settingsSearchInput" type="search" placeholder="예: timeout, vLLM, 업로드">
+          </label>
+          <label>
+            <span>그룹</span>
+            <select id="settingsGroupFilter">
+              <option value="all">전체</option>
+              <option value="ocr_api">OCR API</option>
+              <option value="chandra">Army-OCR</option>
+              <option value="playground">Playground</option>
+              <option value="national_assembly">국회 OCR</option>
+              <option value="vllm">vLLM</option>
+            </select>
+          </label>
+          <label class="admin-check">
+            <input id="restartOnlyToggle" type="checkbox">
+            <span>재시작 필요 항목만</span>
+          </label>
+          <label class="admin-check">
+            <input id="overrideOnlyToggle" type="checkbox">
+            <span>저장값만</span>
+          </label>
         </div>
         <form id="adminSettingsForm" class="runtime-settings-form admin-settings-form">
           <div id="adminSettingsFields" class="runtime-settings-fields"></div>

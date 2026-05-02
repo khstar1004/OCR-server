@@ -119,12 +119,11 @@ class DatalabCompatService:
         self.executions_dir.mkdir(parents=True, exist_ok=True)
 
     def versions(self) -> dict[str, Any]:
-        model_source = self.settings.chandra_model_dir or self.settings.chandra_model_id
         return {
-            "service": "army-ocr",
+            "service": "Army-OCR",
             "compat_mode": "datalab-like-v1",
-            "ocr_backend": self.settings.ocr_backend,
-            "chandra_model": str(model_source),
+            "ocr_backend": "army_ocr",
+            "model_family": "Army-OCR",
         }
 
     def list_step_types(self) -> dict[str, Any]:
@@ -140,7 +139,7 @@ class DatalabCompatService:
                 {
                     "step_key": "ocr",
                     "name": "OCR",
-                    "description": "Run Chandra-backed OCR and return page-level text blocks.",
+                    "description": "Run the OCR engine and return page-level text blocks.",
                     "available": True,
                     "input_types": ["pdf", "png", "jpg", "jpeg", "webp"],
                 },
@@ -187,7 +186,7 @@ class DatalabCompatService:
         record = self.get_request_record(request_id)
         result = record.get("result")
         if isinstance(result, dict):
-            return result
+            return self._normalized_result_payload(record, result)
         return {
             "status": str(record.get("status") or "processing"),
             "success": False if record.get("status") == "failed" else None,
@@ -537,7 +536,6 @@ class DatalabCompatService:
         runtime = result.get("runtime") if isinstance(result.get("runtime"), dict) else {}
         progress = result.get("progress") if isinstance(result.get("progress"), dict) else {}
         request_id = str(record.get("request_id") or fallback_request_id)
-        status_value = str(result.get("status") or record.get("status") or "processing")
         created_at = str(record.get("created_at") or "")
         updated_at = str(record.get("updated_at") or created_at)
         page_count = cls._first_non_empty(
@@ -549,6 +547,15 @@ class DatalabCompatService:
             result.get("processed_page_count"),
             metadata.get("processed_page_count"),
             progress.get("processed_pages"),
+        )
+        status_value = cls._normalized_request_status(
+            record=record,
+            result=result,
+            metadata=metadata,
+            runtime=runtime,
+            progress=progress,
+            page_count=page_count,
+            processed_page_count=processed_page_count,
         )
         file_name = str(
             cls._first_non_empty(
@@ -578,12 +585,149 @@ class DatalabCompatService:
             "_sort_timestamp": cls._history_timestamp(updated_at or created_at),
         }
 
+    @classmethod
+    def _normalized_request_status(
+        cls,
+        *,
+        record: dict[str, Any],
+        result: dict[str, Any],
+        metadata: dict[str, Any],
+        runtime: dict[str, Any],
+        progress: dict[str, Any],
+        page_count: Any,
+        processed_page_count: Any,
+    ) -> str:
+        raw_status = str(result.get("status") or record.get("status") or "processing").strip().lower()
+        record_status = str(record.get("status") or "").strip().lower()
+        if raw_status in {"failed", "error"} or result.get("success") is False or record.get("error"):
+            return "failed"
+        if raw_status in {"complete", "completed", "success"} or record_status in {"complete", "completed", "success"}:
+            return "complete"
+        if (
+            result.get("success") is True
+            or metadata.get("processing_complete") is True
+            or str(runtime.get("status") or "").strip().lower() in {"complete", "completed", "success"}
+            or str(progress.get("status") or "").strip().lower() in {"complete", "completed", "success"}
+        ):
+            return "complete"
+        processed = cls._coerce_positive_number(processed_page_count)
+        total = cls._coerce_positive_number(page_count)
+        if processed is not None and total is not None and processed >= total:
+            pages = cls._result_pages(result)
+            if pages:
+                return "complete"
+        return raw_status or "processing"
+
+    @classmethod
+    def _normalized_result_payload(cls, record: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+        metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+        runtime = result.get("runtime") if isinstance(result.get("runtime"), dict) else {}
+        progress = result.get("progress") if isinstance(result.get("progress"), dict) else {}
+        page_count = cls._first_non_empty(
+            result.get("page_count"),
+            metadata.get("total_page_count"),
+            runtime.get("page_count"),
+        )
+        processed_page_count = cls._first_non_empty(
+            result.get("processed_page_count"),
+            metadata.get("processed_page_count"),
+            progress.get("processed_pages"),
+        )
+        status_value = cls._normalized_request_status(
+            record=record,
+            result=result,
+            metadata=metadata,
+            runtime=runtime,
+            progress=progress,
+            page_count=page_count,
+            processed_page_count=processed_page_count,
+        )
+        if status_value == str(result.get("status") or "").strip().lower():
+            return result
+
+        normalized = dict(result)
+        normalized["status"] = status_value
+        if status_value == "complete" and normalized.get("success") is None:
+            normalized["success"] = True
+        if status_value == "complete":
+            normalized["processed_page_count"] = cls._complete_processed_count(
+                processed_page_count=processed_page_count,
+                page_count=page_count,
+                result=result,
+            )
+            normalized["progress"] = cls._complete_progress_payload(
+                progress=progress,
+                processed_page_count=normalized["processed_page_count"],
+                page_count=page_count,
+                result=result,
+            )
+            normalized_metadata = dict(metadata)
+            normalized_metadata["processing_complete"] = True
+            normalized_metadata["processed_page_count"] = normalized["processed_page_count"]
+            normalized_metadata["total_page_count"] = normalized["progress"]["total_pages"]
+            normalized["metadata"] = normalized_metadata
+        return normalized
+
+    @staticmethod
+    def _result_pages(result: dict[str, Any]) -> list[Any]:
+        pages = result.get("pages")
+        if isinstance(pages, list):
+            return pages
+        json_payload = result.get("json") if isinstance(result.get("json"), dict) else {}
+        pages = json_payload.get("pages")
+        return pages if isinstance(pages, list) else []
+
+    @classmethod
+    def _complete_processed_count(cls, *, processed_page_count: Any, page_count: Any, result: dict[str, Any]) -> int:
+        processed = cls._coerce_positive_number(processed_page_count)
+        total = cls._coerce_positive_number(page_count)
+        pages = len(cls._result_pages(result))
+        if total is not None:
+            return int(total)
+        if processed is not None:
+            return int(processed)
+        return pages
+
+    @classmethod
+    def _complete_progress_payload(
+        cls,
+        *,
+        progress: dict[str, Any],
+        processed_page_count: int,
+        page_count: Any,
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        normalized = dict(progress)
+        total = cls._coerce_positive_number(page_count)
+        if total is None:
+            total = cls._coerce_positive_number(normalized.get("total_pages"))
+        total_pages = int(total) if total is not None else max(processed_page_count, len(cls._result_pages(result)))
+        normalized.update(
+            {
+                "status": "complete",
+                "processed_pages": processed_page_count,
+                "total_pages": total_pages,
+                "percent": 100.0,
+            }
+        )
+        return normalized
+
     @staticmethod
     def _first_non_empty(*values: Any) -> Any:
         for value in values:
             if value not in (None, ""):
                 return value
         return None
+
+    @staticmethod
+    def _coerce_positive_number(value: Any) -> float | None:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        if number <= 0:
+            return None
+        return number
 
     @staticmethod
     def _history_timestamp(value: str) -> float:
@@ -891,11 +1035,18 @@ class DatalabCompatService:
             pages: list[PageLayout] = []
             total_pages = len(selected)
             for page in selected:
+                page_started_perf = time.perf_counter()
                 parsed_page = self.engine.parse_page(
                     image_path=page.image_path,
                     page_number=page.page_no,
                     width=page.width,
                     height=page.height,
+                )
+                self._attach_page_runtime(
+                    parsed_page,
+                    page_image=page.image_path,
+                    started_perf=page_started_perf,
+                    total_pages=total_pages,
                 )
                 pages.append(parsed_page)
                 if page_callback is not None:
@@ -911,15 +1062,39 @@ class DatalabCompatService:
             raise ValueError("page_number must be greater than zero")
         if (resolved_width or 0) <= 0 or (resolved_height or 0) <= 0:
             raise ValueError("unable to resolve image dimensions")
+        page_started_perf = time.perf_counter()
         page = self.engine.parse_page(
             image_path=input_path,
             page_number=page_number,
             width=int(resolved_width),
             height=int(resolved_height),
         )
+        self._attach_page_runtime(
+            page,
+            page_image=input_path,
+            started_perf=page_started_perf,
+            total_pages=1,
+        )
         if page_callback is not None:
             page_callback(page, input_path, 1)
         return [page], [input_path]
+
+    @staticmethod
+    def _attach_page_runtime(
+        page: PageLayout,
+        *,
+        page_image: Path,
+        started_perf: float,
+        total_pages: int,
+    ) -> None:
+        page.raw_vl["app_runtime"] = {
+            "page_number": page.page_number,
+            "total_pages": total_pages,
+            "duration_ms": round((time.perf_counter() - started_perf) * 1000, 2),
+            "image_path": str(page_image),
+            "width": page.width,
+            "height": page.height,
+        }
 
     @staticmethod
     def _select_rendered_pages(pages: tuple[Any, ...], *, max_pages: int | None, page_range: str | None) -> list[Any]:
@@ -988,6 +1163,9 @@ class DatalabCompatService:
                     for block in unassigned
                 ],
             }
+            page_runtime = self._page_runtime(page)
+            if page_runtime:
+                page_payload["runtime"] = page_runtime
             page_payloads.append(page_payload)
             markdown_chunks.append(self._page_markdown(page_payload))
             html_pages.append(self._page_html(page_payload, add_block_ids=add_block_ids))
@@ -1014,6 +1192,11 @@ class DatalabCompatService:
         else:
             result_payload = {name: output_payloads[name] for name in output_formats}
         requested_extras = [value.strip() for value in str(extras or "").split(",") if value.strip()]
+        page_runtimes = [
+            page_payload["runtime"]
+            for page_payload in page_payloads
+            if isinstance(page_payload.get("runtime"), dict)
+        ]
 
         result = {
             "status": "complete",
@@ -1028,8 +1211,8 @@ class DatalabCompatService:
             "chunks": chunk_list,
             "parse_quality_score": parse_quality_score,
             "metadata": {
-                "engine": "chandra",
-                "backend": self.settings.ocr_backend,
+                "engine": "army_ocr",
+                "backend": "army_ocr",
                 "compat_mode": "datalab-like-v1",
                 "datalab_compat": True,
                 "mode": mode,
@@ -1045,6 +1228,7 @@ class DatalabCompatService:
                 "source_file": file_name,
                 "processed_page_count": len(page_payloads),
                 "parse_quality_score": parse_quality_score,
+                "page_runtimes": page_runtimes,
             },
             "checkpoint_id": request_id,
             "total_cost": 0,
@@ -1080,7 +1264,7 @@ class DatalabCompatService:
             for block in page.blocks
             if block.label != BlockLabel.IMAGE
         ]
-        return {
+        payload = {
             "page_number": page.page_number,
             "width": page.width,
             "height": page.height,
@@ -1091,6 +1275,15 @@ class DatalabCompatService:
             "raw_structure": page.raw_structure,
             "raw_fallback_ocr": page.raw_fallback_ocr,
         }
+        page_runtime = self._page_runtime(page)
+        if page_runtime:
+            payload["runtime"] = page_runtime
+        return payload
+
+    @staticmethod
+    def _page_runtime(page: PageLayout) -> dict[str, Any] | None:
+        runtime = page.raw_vl.get("app_runtime") if isinstance(page.raw_vl, dict) else None
+        return dict(runtime) if isinstance(runtime, dict) else None
 
     @staticmethod
     def _serialize_article(article: Any) -> dict[str, Any]:
@@ -1145,7 +1338,15 @@ class DatalabCompatService:
             return ""
         if label in {"title", "sectionheader"}:
             return f"## {text}"
-        if label in {"caption", "pageheader", "pagefooter"}:
+        if label == "table":
+            return f"**Table**\n\n{text}"
+        if label == "code_block":
+            return f"```text\n{text}\n```"
+        if label in {"equation_block", "chemical_block"}:
+            return f"$$\n{text}\n$$"
+        if label in {"form", "table_of_contents", "bibliography", "complex_block", "blank_page"}:
+            return f"**{label.replace('_', ' ').title()}**\n\n{text}"
+        if label in {"caption", "footnote", "pageheader", "pagefooter", "header", "footer"}:
             return f"*{text}*"
         return text
 
@@ -1162,6 +1363,8 @@ class DatalabCompatService:
                 parts.append(f"<h3{class_attr}{block_attr}>{text}</h3>")
             elif label == "image":
                 parts.append(f"<figure{class_attr}{block_attr}></figure>")
+            elif label in {"table", "code_block", "equation_block", "chemical_block", "form", "complex_block"} and text:
+                parts.append(f"<pre{class_attr}{block_attr}>{text}</pre>")
             elif text:
                 parts.append(f"<p{class_attr}{block_attr}>{text}</p>")
         if len(parts) == 2:

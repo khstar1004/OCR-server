@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
 import json
-from pathlib import Path
 from typing import Any
 
 from sqlalchemy import func, select
@@ -31,10 +29,7 @@ from app.services.storage import OutputStorage
 
 
 def get_pipeline_stage_labels() -> tuple[tuple[str, str], ...]:
-    settings = get_settings()
-    source = settings.chandra_model_dir or settings.chandra_model_id
-    model_name = Path(source).name if source else "chandra-ocr-2"
-    primary_label = f"Chandra OCR ({model_name})"
+    primary_label = "Army-OCR"
     structure_label = "보조 레이아웃 (미사용)"
     fallback_label = "Fallback OCR (미사용)"
 

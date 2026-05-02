@@ -10,6 +10,7 @@ from typing import Any, Mapping, Protocol, Sequence, TypeVar
 
 from PIL import Image
 
+from app.domain.types import normalize_block_label_value
 from app.ocr.types import OCRDocumentResult, OCRPageArtifacts, PageImageArtifact, RenderedPdf
 from app.services.artifacts import (
     JobArtifactLayout,
@@ -190,6 +191,13 @@ def _maybe_scale_block_bboxes(blocks: list[dict[str, Any]], page: PageImageArtif
 _STRUCTURED_BLOCK_PATTERN = re.compile(r"<div\b(?P<attrs>[^>]*)>(?P<body>.*?)</div>", re.IGNORECASE | re.DOTALL)
 _HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
 _BR_TAG_PATTERN = re.compile(r"<\s*br\s*/?\s*>", re.IGNORECASE)
+_TABLE_ROW_PATTERN = re.compile(r"<tr\b[^>]*>(?P<body>.*?)</tr>", re.IGNORECASE | re.DOTALL)
+_TABLE_CELL_PATTERN = re.compile(r"<(?:td|th)\b[^>]*>(?P<body>.*?)</(?:td|th)>", re.IGNORECASE | re.DOTALL)
+_TABLE_CELL_BOUNDARY_PATTERN = re.compile(
+    r"</\s*(?:td|th)\s*>\s*<\s*(?:td|th)\b[^>]*>",
+    re.IGNORECASE,
+)
+_TABLE_ROW_BREAK_PATTERN = re.compile(r"</\s*tr\s*>", re.IGNORECASE)
 
 
 def _extract_blocks_from_structured_text(text: str) -> list[dict[str, Any]]:
@@ -207,7 +215,9 @@ def _extract_blocks_from_structured_text(text: str) -> list[dict[str, Any]]:
         if bbox is None:
             continue
         raw_label = html.unescape(label_match.group("label")).strip()
-        content = _html_fragment_to_text(match.group("body"))
+        body = match.group("body")
+        table_rows = _extract_table_rows_from_html(body)
+        content = _table_rows_to_text(table_rows) if table_rows else _html_fragment_to_text(body)
         kind = _classify_structured_label(raw_label)
         if not content and kind != "image":
             continue
@@ -215,17 +225,19 @@ def _extract_blocks_from_structured_text(text: str) -> list[dict[str, Any]]:
         if signature in seen:
             continue
         seen.add(signature)
-        blocks.append(
-            {
-                "id": f"block-{index:04d}",
-                "type": kind,
-                "label": raw_label,
-                "bbox": bbox,
-                "content": content,
-                "text": content,
-                "score": 0.0,
-            }
-        )
+        block = {
+            "id": f"block-{index:04d}",
+            "type": kind,
+            "label": raw_label,
+            "bbox": bbox,
+            "content": content,
+            "text": content,
+            "score": 0.0,
+        }
+        if table_rows:
+            block["table_rows"] = table_rows
+            block["html"] = body.strip()
+        blocks.append(block)
 
     return blocks
 
@@ -245,6 +257,8 @@ def _parse_structured_bbox(raw_bbox: str) -> list[int] | None:
 def _html_fragment_to_text(fragment: str) -> str:
     fragment = html.unescape(fragment)
     fragment = _BR_TAG_PATTERN.sub("\n", fragment)
+    fragment = _TABLE_CELL_BOUNDARY_PATTERN.sub("\t", fragment)
+    fragment = _TABLE_ROW_BREAK_PATTERN.sub("\n", fragment)
     fragment = _HTML_TAG_PATTERN.sub("", fragment)
     fragment = html.unescape(fragment)
     fragment = re.sub(r"\r\n?", "\n", fragment)
@@ -254,19 +268,27 @@ def _html_fragment_to_text(fragment: str) -> str:
     return fragment.strip()
 
 
+def _extract_table_rows_from_html(fragment: str) -> list[list[str]]:
+    decoded = html.unescape(str(fragment or ""))
+    rows: list[list[str]] = []
+    for row_match in _TABLE_ROW_PATTERN.finditer(decoded):
+        cells = [
+            _html_fragment_to_text(cell_match.group("body"))
+            for cell_match in _TABLE_CELL_PATTERN.finditer(row_match.group("body"))
+        ]
+        cleaned = [cell for cell in cells if cell]
+        if len(cleaned) > 1:
+            rows.append(cleaned)
+    return rows
+
+
+def _table_rows_to_text(rows: list[list[str]]) -> str:
+    return "\n".join("\t".join(cell for cell in row if cell) for row in rows).strip()
+
+
 def _classify_structured_label(label: str) -> str:
-    normalized = re.sub(r"[\s-]+", "_", label.strip().lower())
-    if any(token in normalized for token in ("image", "figure", "photo", "picture", "illustration", "chart", "graphic")):
-        return "image"
-    if any(token in normalized for token in ("caption", "footnote")):
-        return "caption"
-    if normalized in {"page_header", "pageheader", "header"}:
-        return "header"
-    if any(token in normalized for token in ("section_header", "headline", "title", "doc_title", "subheadline")):
-        return "title"
-    if normalized in {"page_footer", "pagefooter", "footer"}:
-        return "footer"
-    return "text"
+    normalized = normalize_block_label_value(label)
+    return "text" if normalized == "unknown" else normalized
 
 
 def _normalize_page_output(

@@ -14,15 +14,39 @@ from typing import Any
 import httpx
 
 from app.core.config import get_settings
-from app.domain.types import BlockLabel, OCRBlock, PageLayout
+from app.domain.types import BlockLabel, OCRBlock, PageLayout, block_label_from_value, normalize_block_label_value
 from app.ocr import ChandraHFConfig, ChandraHFLocalRunner, ChandraVLLMRunner, PageImageArtifact, normalize_chandra_page_output
 from app.services.image_preprocessor import RetryImagePreprocessor
 from app.services.runtime_config import runtime_config_value
-from app.utils.geometry import bbox_area, bbox_from_any, bbox_height, box_contains, box_intersection_area, clamp_bbox, normalize_bboxes_to_page
+from app.utils.geometry import bbox_area, bbox_from_any, bbox_height, bbox_union, box_contains, box_intersection_area, clamp_bbox, normalize_bboxes_to_page
 
 _HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
 _BR_TAG_PATTERN = re.compile(r"<\s*br\s*/?\s*>", re.IGNORECASE)
 _BLOCK_BREAK_PATTERN = re.compile(r"</\s*(?:p|div|h[1-6]|li)\s*>", re.IGNORECASE)
+_TABLE_ROW_PATTERN = re.compile(r"<tr\b[^>]*>(?P<body>.*?)</tr>", re.IGNORECASE | re.DOTALL)
+_TABLE_CELL_PATTERN = re.compile(r"<(?:td|th)\b[^>]*>(?P<body>.*?)</(?:td|th)>", re.IGNORECASE | re.DOTALL)
+
+TEXTUAL_QUALITY_LABELS = {
+    BlockLabel.TITLE,
+    BlockLabel.TEXT,
+    BlockLabel.TABLE,
+    BlockLabel.FOOTNOTE,
+    BlockLabel.EQUATION_BLOCK,
+    BlockLabel.LIST_GROUP,
+    BlockLabel.CODE_BLOCK,
+    BlockLabel.FORM,
+    BlockLabel.TABLE_OF_CONTENTS,
+    BlockLabel.CHEMICAL_BLOCK,
+    BlockLabel.BIBLIOGRAPHY,
+    BlockLabel.COMPLEX_BLOCK,
+    BlockLabel.HANDWRITING,
+    BlockLabel.TEXT_INLINE_MATH,
+    BlockLabel.TABLE_CELL,
+    BlockLabel.REFERENCE,
+    BlockLabel.LINE,
+    BlockLabel.SPAN,
+    BlockLabel.CAPTION,
+}
 
 
 class OCREngine:
@@ -116,8 +140,8 @@ class OCREngine:
         self._notify(stage_callback, "ocr_vl", "running", f"running {self._chandra_display_name()}")
         raw_vl = self._run_chandra(image_path, page_number, width, height, stage_callback)
         self._notify(stage_callback, "ocr_vl", "completed", f"completed {self._chandra_display_name()}")
-        self._notify(stage_callback, "ocr_structure", "skipped", "Chandra-only pipeline")
-        self._notify(stage_callback, "ocr_fallback", "skipped", "Chandra-only pipeline")
+        self._notify(stage_callback, "ocr_structure", "skipped", "single-engine pipeline")
+        self._notify(stage_callback, "ocr_fallback", "skipped", "single-engine pipeline")
         blocks = self._merge_blocks(page_number, width, height, raw_vl)
         return PageLayout(
             page_number=page_number,
@@ -152,8 +176,8 @@ class OCREngine:
             height=height,
         )
         self._notify(stage_callback, "ocr_vl", "completed", "remote OCR service call completed")
-        self._notify(stage_callback, "ocr_structure", "skipped", "remote OCR service handles Chandra pipeline")
-        self._notify(stage_callback, "ocr_fallback", "skipped", "remote OCR service handles Chandra pipeline")
+        self._notify(stage_callback, "ocr_structure", "skipped", "remote OCR service handles the full pipeline")
+        self._notify(stage_callback, "ocr_fallback", "skipped", "remote OCR service handles the full pipeline")
         return layout
 
     def _parse_with_remote_marker(
@@ -193,7 +217,12 @@ class OCREngine:
         stage_callback: Callable[[str, str, str], None] | None = None,
     ) -> PageLayout | None:
         with tempfile.TemporaryDirectory(prefix="ocr-retry-") as temp_dir:
-            variant_paths = self._retry_preprocessor.build_retry_variants(image_path, Path(temp_dir))
+            variant_paths = [
+                self._retry_preprocessor.build_retry_variant(
+                    image_path,
+                    Path(temp_dir) / f"{image_path.stem}_retry_autocontrast.png",
+                )
+            ]
             best_layout: PageLayout | None = None
             best_score = float("-inf")
             for index, retry_image_path in enumerate(variant_paths, start=1):
@@ -228,7 +257,7 @@ class OCREngine:
             source_pdf=image_path,
             dpi=self._runtime_int("pdf_render_dpi", self.settings.pdf_render_dpi),
         )
-        outputs = self._run_with_inference_slot(stage_callback, "Chandra OCR", lambda: list(runner([page])))
+        outputs = self._run_with_inference_slot(stage_callback, "Army-OCR engine", lambda: list(runner([page])))
         if len(outputs) != 1:
             raise RuntimeError("Chandra runner returned an unexpected number of page outputs.")
         _, _, normalized_json, metadata = normalize_chandra_page_output(outputs[0], page, config)
@@ -347,11 +376,7 @@ class OCREngine:
         for index, block_payload in enumerate(resolved_payload.get("blocks", []) or []):
             if not isinstance(block_payload, Mapping):
                 continue
-            label_value = str(block_payload.get("label") or "unknown").strip().lower()
-            try:
-                label = BlockLabel(label_value)
-            except ValueError:
-                label = BlockLabel.UNKNOWN
+            label = block_label_from_value(block_payload.get("label"))
 
             block_bbox = bbox_from_any(block_payload.get("bbox"))
             if block_bbox is None:
@@ -546,19 +571,23 @@ class OCREngine:
         if not parsing_items and markdown:
             parsing_items = self._build_synthetic_chandra_items(markdown, width, height)
         parsing_items = self._normalize_parsing_item_bboxes(parsing_items, width, height)
+        safe_metadata = dict(metadata)
+        safe_metadata["model_id"] = "Army-OCR"
+        if safe_metadata.get("source") != "datalab_marker":
+            safe_metadata["source"] = "army_ocr"
 
         return {
-            "engine": engine_name,
-            "backend": backend_name,
-            "model_id": metadata.get("model_id") or self._resolve_chandra_source(),
-            "prompt_type": metadata.get("prompt_type")
+            "engine": "army_ocr",
+            "backend": "army_ocr",
+            "model_id": "Army-OCR",
+            "prompt_type": safe_metadata.get("prompt_type")
             or self._runtime_str("chandra_prompt_type", self.settings.chandra_prompt_type or "ocr_layout"),
             "page_no": normalized_json.get("page_no"),
             "width": width,
             "height": height,
             "parsing_res_list": parsing_items,
             "raw": normalized_json,
-            "metadata": metadata,
+            "metadata": safe_metadata,
         }
 
     @staticmethod
@@ -609,6 +638,9 @@ class OCREngine:
                             "content": text,
                             "score": self._as_float(node.get("score") or node.get("confidence")),
                         }
+                        for key in ("rows", "table_rows", "cells", "table_cells", "table", "html", "markdown"):
+                            if key in node:
+                                item[key] = node[key]
                         if label == "image":
                             item["content"] = ""
                         results.append(item)
@@ -731,22 +763,14 @@ class OCREngine:
 
     @staticmethod
     def _normalize_chandra_label(kind: str, text: str) -> str:
-        lowered = re.sub(r"[\s-]+", "_", (kind or "").lower())
-        if any(token in lowered for token in ("image", "figure", "photo", "graphic", "diagram")):
-            return "image"
-        if any(token in lowered for token in ("caption", "footnote")):
-            return "caption"
-        if lowered in {"header", "page_header", "pageheader"}:
-            return "header"
-        if any(token in lowered for token in ("headline", "title", "section_header", "doc_title", "subheadline")):
-            return "title"
-        if any(token in lowered for token in ("footer",)):
-            return "footer"
-        if any(token in lowered for token in ("advert", "ad")):
-            return "advertisement"
+        normalized = normalize_block_label_value(kind)
+        if normalized != BlockLabel.UNKNOWN.value:
+            if normalized == BlockLabel.TEXT.value and text.strip().startswith("#"):
+                return BlockLabel.TITLE.value
+            return normalized
         if text.strip().startswith("#"):
-            return "title"
-        return "text"
+            return BlockLabel.TITLE.value
+        return BlockLabel.TEXT.value
 
     def _is_layout_acceptable(self, layout: PageLayout) -> bool:
         text = self._layout_text(layout)
@@ -782,7 +806,7 @@ class OCREngine:
         chunks = [
             block.text
             for block in layout.blocks
-            if block.label in {BlockLabel.TITLE, BlockLabel.TEXT, BlockLabel.CAPTION} and block.text.strip()
+            if block.label in TEXTUAL_QUALITY_LABELS and block.text.strip()
         ]
         return "\n".join(chunks).strip()
 
@@ -813,7 +837,11 @@ class OCREngine:
 
     @staticmethod
     def _layout_structure_penalty(layout: PageLayout) -> float:
-        text_blocks = [block for block in layout.blocks if block.label in {BlockLabel.TITLE, BlockLabel.TEXT, BlockLabel.CAPTION}]
+        text_blocks = [
+            block
+            for block in layout.blocks
+            if block.label in TEXTUAL_QUALITY_LABELS
+        ]
         if len(text_blocks) < 3:
             return 0.0
 
@@ -846,11 +874,8 @@ class OCREngine:
     def _chandra_display_name(self) -> str:
         method = (self.settings.chandra_method or "hf").strip().lower()
         if method == "vllm":
-            name = (self.settings.vllm_model_name or self.settings.chandra_model_dir or self.settings.chandra_model_id or "chandra-ocr-2")
-            return f"Chandra OCR via vLLM ({Path(name).name})"
-        source = self.settings.chandra_model_dir or self.settings.chandra_model_id
-        name = Path(source).name if source else "chandra-ocr-2"
-        return f"Chandra OCR ({name})"
+            return "Army-OCR via vLLM"
+        return "Army-OCR"
 
     def _merge_blocks(
         self,
@@ -886,6 +911,7 @@ class OCREngine:
             region_label = str(region["label"]).lower()
             if not self._is_image_label(region_label):
                 continue
+            visual_label = block_label_from_value(region_label, default=BlockLabel.IMAGE)
             key = (region_label, *region["bbox"])
             if key in seen_image_blocks:
                 continue
@@ -897,13 +923,71 @@ class OCREngine:
                 OCRBlock(
                     block_id=f"image-{page_number}-{idx}",
                     page_number=page_number,
-                    label=BlockLabel.IMAGE,
+                    label=visual_label,
                     bbox=region["bbox"],
                     confidence=float(region.get("score", 0.0) or 0.0),
                     metadata={"layout_label": region_label},
                 )
             )
-        return merged
+        return self._attach_embedded_images_to_tables(merged, page_width, page_height, median_height)
+
+    @staticmethod
+    def _attach_embedded_images_to_tables(
+        blocks: list[OCRBlock],
+        page_width: int,
+        page_height: int,
+        median_height: int,
+    ) -> list[OCRBlock]:
+        table_blocks = [block for block in blocks if block.label == BlockLabel.TABLE]
+        image_blocks = [block for block in blocks if block.label == BlockLabel.IMAGE]
+        if not table_blocks or not image_blocks:
+            return blocks
+
+        max_gap = max(median_height * 3, int(page_height * 0.08), 24)
+        for table in table_blocks:
+            table_rows = table.metadata.get("table_rows")
+            if not table_rows:
+                continue
+            attached: list[OCRBlock] = []
+            for image in image_blocks:
+                if image.metadata.get("embedded_in_table"):
+                    continue
+                if not OCREngine._looks_like_table_embedded_image(image.bbox, table.bbox, max_gap=max_gap):
+                    continue
+                image.metadata["embedded_in_table"] = table.block_id
+                attached.append(image)
+            if not attached:
+                continue
+            table.metadata["embedded_images"] = [
+                {
+                    "block_id": image.block_id,
+                    "bbox": image.bbox[:],
+                    "layout_label": image.metadata.get("layout_label"),
+                }
+                for image in attached
+            ]
+            table.metadata["original_bbox"] = table.bbox[:]
+            table.bbox = clamp_bbox(bbox_union([table.bbox, *(image.bbox for image in attached)]), page_width, page_height)
+        return blocks
+
+    @staticmethod
+    def _looks_like_table_embedded_image(image_bbox: list[int], table_bbox: list[int], *, max_gap: int) -> bool:
+        table_width = max(1, table_bbox[2] - table_bbox[0])
+        image_width = max(1, image_bbox[2] - image_bbox[0])
+        image_center_x = (image_bbox[0] + image_bbox[2]) / 2
+        if image_width > table_width * 1.08:
+            return False
+        if not (table_bbox[0] - table_width * 0.08 <= image_center_x <= table_bbox[2] + table_width * 0.08):
+            return False
+
+        horizontal_overlap = max(0, min(image_bbox[2], table_bbox[2]) - max(image_bbox[0], table_bbox[0]))
+        if horizontal_overlap / min(image_width, table_width) < 0.45:
+            return False
+
+        if box_contains(table_bbox, image_bbox):
+            return True
+        vertical_gap = table_bbox[1] - image_bbox[3]
+        return 0 <= vertical_gap <= max_gap
 
     def _extract_layout_regions(self, raw: dict[str, Any]) -> list[dict[str, Any]]:
         regions: list[dict[str, Any]] = []
@@ -930,7 +1014,18 @@ class OCREngine:
             parser_label = str(item.get("label") or "").lower()
             if self._is_image_label(parser_label):
                 continue
-            text = self._clean_extracted_text(item.get("content"))
+            metadata = {"parser_label": parser_label}
+            for key in ("rows", "table_rows", "cells", "table_cells", "table"):
+                if item.get(key):
+                    metadata[key] = item[key]
+            table_rows = self._normalize_table_rows(metadata.get("table_rows") or metadata.get("rows"))
+            if not table_rows and self._label_from_parser_label(parser_label) == BlockLabel.TABLE:
+                table_rows = self._extract_table_rows_from_html(
+                    item.get("html") or item.get("markdown") or item.get("content") or item.get("text")
+                )
+            if table_rows:
+                metadata["table_rows"] = table_rows
+            text = self._table_rows_to_text(table_rows) if table_rows else self._clean_extracted_text(item.get("content"))
             if not text:
                 continue
             bbox = bbox_from_any(item.get("bbox") or item.get("polygon_points") or item.get("ori_bbox"))
@@ -944,7 +1039,7 @@ class OCREngine:
                     bbox=bbox,
                     text=text,
                     confidence=float(item.get("score", 0.0) or 0.0),
-                    metadata={"parser_label": parser_label},
+                    metadata=metadata,
                 )
             )
         return lines
@@ -963,19 +1058,44 @@ class OCREngine:
         return text.strip()
 
     @staticmethod
+    def _extract_table_rows_from_html(value: Any) -> list[list[str]]:
+        raw = html.unescape(str(value or ""))
+        rows: list[list[str]] = []
+        for row_match in _TABLE_ROW_PATTERN.finditer(raw):
+            cells = [
+                OCREngine._clean_extracted_text(cell_match.group("body"))
+                for cell_match in _TABLE_CELL_PATTERN.finditer(row_match.group("body"))
+            ]
+            cleaned = [cell for cell in cells if cell]
+            if len(cleaned) > 1:
+                rows.append(cleaned)
+        return rows
+
+    @staticmethod
+    def _normalize_table_rows(value: Any) -> list[list[str]]:
+        if not isinstance(value, list):
+            return []
+        rows: list[list[str]] = []
+        for row in value:
+            cells: list[str] = []
+            if isinstance(row, list):
+                cells = [OCREngine._clean_extracted_text(cell) for cell in row]
+            elif isinstance(row, dict):
+                candidate = row.get("cells") or row.get("columns") or row.get("values")
+                if isinstance(candidate, list):
+                    cells = [OCREngine._clean_extracted_text(cell) for cell in candidate]
+            cleaned = [cell for cell in cells if cell]
+            if len(cleaned) > 1:
+                rows.append(cleaned)
+        return rows
+
+    @staticmethod
+    def _table_rows_to_text(rows: list[list[str]]) -> str:
+        return "\n".join("\t".join(cell for cell in row if cell) for row in rows).strip()
+
+    @staticmethod
     def _label_from_parser_label(label: str) -> BlockLabel:
-        lowered = label.lower()
-        if any(tag in lowered for tag in ["title", "headline"]):
-            return BlockLabel.TITLE
-        if any(tag in lowered for tag in ["caption", "footnote"]):
-            return BlockLabel.CAPTION
-        if "header" in lowered:
-            return BlockLabel.HEADER
-        if "footer" in lowered:
-            return BlockLabel.FOOTER
-        if any(tag in lowered for tag in ["advert", "ad"]):
-            return BlockLabel.ADVERTISEMENT
-        return BlockLabel.TEXT
+        return block_label_from_value(label, default=BlockLabel.TEXT)
 
     @staticmethod
     def _best_region_for_line(line: OCRBlock, regions: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -1000,16 +1120,13 @@ class OCREngine:
         page_width: int,
         page_height: int,
     ) -> BlockLabel:
-        if parser_label in {
-            BlockLabel.TITLE,
-            BlockLabel.CAPTION,
-            BlockLabel.HEADER,
-            BlockLabel.FOOTER,
-            BlockLabel.ADVERTISEMENT,
-        }:
+        if parser_label not in {BlockLabel.TEXT, BlockLabel.UNKNOWN}:
             return parser_label
 
         region = (region_label or "").lower()
+        region_block_label = block_label_from_value(region)
+        if region_block_label not in {BlockLabel.TEXT, BlockLabel.UNKNOWN}:
+            return region_block_label
         header_like = any(tag in region for tag in ["header", "page_header", "pageheader"])
         footer_like = any(tag in region for tag in ["footer", "page_footer", "pagefooter"])
         if any(tag in region for tag in ["title", "headline", "section", "doc_title", "subheadline"]):
@@ -1055,7 +1172,7 @@ class OCREngine:
 
     @staticmethod
     def _is_image_label(label: str) -> bool:
-        return any(tag in label for tag in ["image", "figure", "photo", "picture", "illustration", "chart", "graphic"])
+        return block_label_from_value(label) == BlockLabel.IMAGE
 
     @staticmethod
     def _looks_like_advertisement(text: str) -> bool:

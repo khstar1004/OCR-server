@@ -14,7 +14,7 @@ from PIL import Image
 
 from app.api.playground import router as playground_router
 from app.core.config import get_settings
-from app.domain.types import PageLayout
+from app.domain.types import PageLayout, SUPPORTED_BLOCK_LABELS
 from app.ocr.rendering import render_pdf_document
 from app.services.artifacts import build_job_artifact_layout
 from app.services.datalab_compat import (
@@ -193,8 +193,8 @@ def capabilities(request: Request) -> dict[str, Any]:
     compat = _get_compat_service(request)
     settings = get_settings()
     return {
-        "service": "army-ocr",
-        "ocr_backend": settings.ocr_backend,
+        "service": "Army-OCR",
+        "ocr_backend": "army_ocr",
         "versions": compat.versions(),
         "input_formats": ["pdf", "png", "jpg", "jpeg", "webp"],
         "endpoints": {
@@ -230,7 +230,8 @@ def capabilities(request: Request) -> dict[str, Any]:
             "raw_payload_toggle": True,
             "request_runtime_metadata": True,
             "request_retention_cleanup": True,
-            "tables": False,
+            "tables": True,
+            "layout_block_labels": list(SUPPORTED_BLOCK_LABELS),
             "forms": False,
             "queries": False,
             "selection_marks": False,
@@ -360,7 +361,7 @@ def health_alias(request: Request) -> dict[str, Any]:
     compat = _get_compat_service(request)
     return {
         "status": "ok",
-        "service": "army-ocr Service",
+        "service": "Army-OCR Service",
         "compat_mode": "datalab-like-v1",
         "versions": compat.versions(),
     }
@@ -1101,7 +1102,7 @@ def create_app() -> FastAPI:
         yield
 
     app = FastAPI(
-        title="army-ocr Service",
+        title="Army-OCR Service",
         version="0.1.0",
         root_path=settings.normalized_root_path,
         lifespan=lifespan,

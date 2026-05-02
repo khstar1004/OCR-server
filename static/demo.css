@@ -913,6 +913,7 @@ pre {
   gap: 16px;
   margin-bottom: 16px;
   padding: 16px;
+  scroll-margin-top: 88px;
 }
 
 .launcher-panel-head h2 {
@@ -1182,11 +1183,43 @@ pre {
   padding: 16px;
 }
 
+.collapsible-panel {
+  display: block;
+}
+
+.collapsible-panel-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  cursor: pointer;
+  list-style: none;
+}
+
+.collapsible-panel-summary::-webkit-details-marker {
+  display: none;
+}
+
+.collapsible-panel[open] .toolbar-button--compact {
+  color: var(--ink-soft);
+  font-size: 0;
+}
+
+.collapsible-panel[open] .toolbar-button--compact::before {
+  content: "접기";
+  font-size: 0.76rem;
+}
+
 .job-finder-head {
   display: grid;
   grid-template-columns: minmax(180px, 0.7fr) minmax(240px, 1fr);
   gap: 12px;
   align-items: end;
+}
+
+.job-finder-panel .job-finder-head {
+  grid-template-columns: minmax(240px, 0.38fr);
+  margin-top: 12px;
 }
 
 .job-finder-head h2 {
@@ -1429,8 +1462,7 @@ pre {
 }
 
 .review-pages-panel {
-  display: grid;
-  gap: 12px;
+  display: block;
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1447,6 +1479,12 @@ pre {
 .review-pages-head h3 {
   margin: 0;
   font-size: 0.96rem;
+}
+
+.review-pages-body {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
 }
 
 .review-toggle {
@@ -1561,6 +1599,28 @@ pre {
 .job-delete-form {
   display: inline-flex;
   margin: 0;
+}
+
+#jobs-content {
+  display: flex;
+  flex-direction: column;
+}
+
+#jobs-content .workspace-grid {
+  order: 1;
+}
+
+#jobs-content .job-overview-panel {
+  order: 2;
+}
+
+#jobs-content .job-integration-panel {
+  order: 3;
+}
+
+#jobs-content .job-status-banner,
+#jobs-content .empty-panel {
+  order: 4;
 }
 
 .workspace-grid {
@@ -1895,6 +1955,12 @@ pre {
   font-weight: 700;
   text-decoration: none;
   cursor: pointer;
+}
+
+.toolbar-button--compact {
+  min-height: 30px;
+  padding: 6px 10px;
+  font-size: 0.76rem;
 }
 
 .toolbar-button:hover {

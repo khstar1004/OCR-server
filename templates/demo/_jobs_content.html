@@ -69,18 +69,20 @@
 
     {% if selected_job_detail.pdf_files %}
     {% set review_state = namespace(count=0) %}
-    <section class="review-pages-panel">
-      <div class="review-pages-head">
+    <details class="review-pages-panel collapsible-panel">
+      <summary class="review-pages-head collapsible-panel-summary">
         <div>
           <p class="panel-kicker">품질 확인</p>
           <h3>확인할 쪽</h3>
         </div>
+        <span class="toolbar-button toolbar-button--compact">펼치기</span>
+      </summary>
+      <div class="review-pages-body">
         <label class="review-toggle">
           <input type="checkbox" data-review-filter checked>
           <span>확인 필요한 쪽만 보기</span>
         </label>
-      </div>
-      <div class="review-page-list" data-review-list>
+        <div class="review-page-list" data-review-list>
         {% for pdf in selected_job_detail.pdf_files %}
           {% for page in pdf.pages %}
           {% set needs_review = page.quality_status in ["warning", "blocked"] %}
@@ -105,8 +107,9 @@
           {% endfor %}
         {% endfor %}
         <p class="job-finder-empty" data-review-empty {% if review_state.count > 0 %}hidden{% endif %}>확인 필요한 쪽이 없습니다.</p>
+        </div>
       </div>
-    </section>
+    </details>
     {% endif %}
 
     {% if selected_job_detail.stages %}

@@ -365,6 +365,8 @@ def test_demo_jobs_renders_article_detail(tmp_path: Path, monkeypatch) -> None:
     assert "/demo/jobs/start-file" in response.text
     assert "폴더 처리 시작" in response.text
     assert "단일 파일 처리" in response.text
+    assert "입력 초기화" in response.text
+    assert 'data-reset-launcher' in response.text
     assert "작업 찾기" in response.text
     assert 'data-job-search' in response.text
     assert 'data-preset="quick"' in response.text

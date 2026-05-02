@@ -29,6 +29,7 @@ Runtime layout:
 - a-cong-vllm-ocr: Chandra vLLM, GPU-only internal service
 - Runtime settings file: /data/runtime/runtime-config/settings.json
 - Account/session file: /data/runtime/runtime-config/auth.json
+- Initial admin login: admin / roqkfrhk1! (override PLAYGROUND_ADMIN_PASSWORD in the Secret for production)
 
 Change settings without image rebuild:
 - Use the playground admin page, or

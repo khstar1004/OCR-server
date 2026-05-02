@@ -23,7 +23,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     OCR_BACKEND=chandra \
     OCR_OFFLINE=true \
     OCR_DEVICE=gpu \
-    OCR_RETRY_LOW_QUALITY=true \
+    OCR_RETRY_LOW_QUALITY=false \
     PDF_RENDER_DPI=300 \
     CHANDRA_MODEL_ID=${CHANDRA_MODEL_ID} \
     CHANDRA_MODEL_DIR=${CHANDRA_MODEL_DIR} \
@@ -34,8 +34,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HF_HOME=/opt/model-cache/huggingface \
     HF_HUB_DISABLE_TELEMETRY=1
 
-LABEL org.opencontainers.image.title="army-ocr App" \
-      org.opencontainers.image.description="army-ocr application image for closed-network carry-in" \
+LABEL org.opencontainers.image.title="Army-OCR App" \
+      org.opencontainers.image.description="Army-OCR application image for closed-network carry-in" \
       org.opencontainers.image.version="${ACONG_BUILD_VERSION}" \
       org.opencontainers.image.created="${ACONG_BUILD_DATE}"
 

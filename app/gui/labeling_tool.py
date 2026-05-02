@@ -789,7 +789,7 @@ class RecordPreviewWidget(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("army-ocr Labeling Tool")
+        self.setWindowTitle("Army-OCR Labeling Tool")
         self.resize(1680, 1020)
         self.records: list[ArticleRecord] = []
         self.current_index: int | None = None
@@ -1707,7 +1707,7 @@ class MainWindow(QMainWindow):
 
 def main() -> int:
     app = QApplication(sys.argv)
-    app.setApplicationName("army-ocr Labeling Tool")
+    app.setApplicationName("Army-OCR Labeling Tool")
     window = MainWindow()
     window.show()
     return app.exec()

@@ -43,7 +43,7 @@ def create_app(
 
     runtime_settings = get_runtime_settings()
     app = FastAPI(
-        title="army-ocr Core Service",
+        title="Army-OCR Core Service",
         version="0.1.0",
         root_path=runtime_settings.normalized_root_path,
         lifespan=lifespan,

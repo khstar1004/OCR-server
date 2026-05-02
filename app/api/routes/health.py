@@ -49,6 +49,6 @@ def ready(db: Session = Depends(get_db)) -> dict[str, object]:
     status = "ready" if all(bool(check.get("ok")) for check in checks.values()) else "degraded"
     return {
         "status": status,
-        "service": "army-ocr",
+        "service": "Army-OCR",
         "checks": checks,
     }

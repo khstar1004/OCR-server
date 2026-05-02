@@ -24,8 +24,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     OCR_DEVICE=remote \
     HF_HUB_DISABLE_TELEMETRY=1
 
-LABEL org.opencontainers.image.title="army-ocr UI" \
-      org.opencontainers.image.description="Lightweight army-ocr web and playground image" \
+LABEL org.opencontainers.image.title="Army-OCR UI" \
+      org.opencontainers.image.description="Lightweight Army-OCR web and playground image" \
       org.opencontainers.image.version="${ACONG_BUILD_VERSION}" \
       org.opencontainers.image.created="${ACONG_BUILD_DATE}"
 

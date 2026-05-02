@@ -12,7 +12,7 @@ def test_chandra_app_image_tar_builder_records_traceability_metadata() -> None:
 
     assert "ARG ACONG_BUILD_VERSION=local" in dockerfile_text
     assert "ARG ACONG_BUILD_DATE=unknown" in dockerfile_text
-    assert 'org.opencontainers.image.title="army-ocr App"' in dockerfile_text
+    assert 'org.opencontainers.image.title="Army-OCR App"' in dockerfile_text
     assert 'org.opencontainers.image.version="${ACONG_BUILD_VERSION}"' in dockerfile_text
     assert "--build-arg ACONG_BUILD_VERSION=$buildVersion" in builder_text
     assert "--build-arg ACONG_BUILD_DATE=$buildStartedUtc" in builder_text
@@ -42,7 +42,7 @@ def test_ui_image_tar_builder_and_k8s_scripts_support_split_images() -> None:
     replace_text = (REPO_ROOT / "scripts" / "replace_public_ocr_app_image.sh").read_text(encoding="utf-8")
     migrate_text = (REPO_ROOT / "scripts" / "migrate_public_ocr_split_ui.sh").read_text(encoding="utf-8")
 
-    assert 'org.opencontainers.image.title="army-ocr UI"' in dockerfile_text
+    assert 'org.opencontainers.image.title="Army-OCR UI"' in dockerfile_text
     assert "app.playground_proxy:app" in builder_text
     assert "image_role = \"web-and-playground\"" in builder_text
     assert "torch" not in requirements_text

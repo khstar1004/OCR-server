@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>army-ocr 로그인</title>
+  <title>Army-OCR 로그인</title>
   <base href="__PLAYGROUND_BASE__">
   <link rel="stylesheet" href="assets/playground.css">
 </head>
@@ -11,8 +11,26 @@
   <main class="auth-shell">
     <section class="auth-panel">
       <div class="brand auth-brand">
-        <span class="brand-mark">a</span>
-        <span>army-ocr</span>
+        <span class="brand-mark" aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="24" height="24" focusable="false" aria-hidden="true">
+            <defs>
+              <linearGradient id="ocrGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#7C3AED" />
+                <stop offset="100%" stop-color="#2DD4BF" />
+              </linearGradient>
+            </defs>
+            <circle cx="60" cy="60" r="18" fill="none" stroke="url(#ocrGradient)" stroke-width="5" />
+            <circle cx="60" cy="60" r="6" fill="url(#ocrGradient)" />
+            <g stroke="url(#ocrGradient)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none">
+              <path d="M 35 35 L 25 35 L 25 45" />
+              <path d="M 85 35 L 95 35 L 95 45" />
+              <path d="M 25 75 L 25 85 L 35 85" />
+              <path d="M 95 75 L 95 85 L 85 85" />
+            </g>
+            <line x1="15" y1="60" x2="105" y2="60" stroke="#2DD4BF" stroke-width="2" opacity="0.6" stroke-dasharray="4 4" />
+          </svg>
+        </span>
+        <span>Army-OCR</span>
       </div>
       <div class="auth-copy">
         <span>관리자 승인 기반 접근</span>

@@ -249,7 +249,7 @@ class OverlayPreviewWidget(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("army-ocr Viewer")
+        self.setWindowTitle("Army-OCR Viewer")
         self.resize(1440, 840)
 
         self.thread_pool = QThreadPool.globalInstance()
@@ -927,7 +927,7 @@ class MainWindow(QMainWindow):
 
 def main() -> int:
     app = QApplication(sys.argv)
-    app.setApplicationName("army-ocr Viewer")
+    app.setApplicationName("Army-OCR Viewer")
     window = MainWindow()
     window.show()
     return app.exec()

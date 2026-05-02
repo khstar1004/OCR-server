@@ -53,13 +53,15 @@ class AuthStore:
         payload = self._read_payload()
         users = payload.get("users") if isinstance(payload.get("users"), dict) else {}
         sessions = payload.get("sessions") if isinstance(payload.get("sessions"), dict) else {}
-        pending_count = sum(1 for user in users.values() if user.get("status") == "pending")
-        active_count = sum(1 for user in users.values() if user.get("status") == "active")
+        status_counts = self._status_counts(users)
         return {
             "path": str(self.path),
             "user_count": len(users),
-            "active_count": active_count,
-            "pending_count": pending_count,
+            "active_count": status_counts.get("active", 0),
+            "pending_count": status_counts.get("pending", 0),
+            "suspended_count": status_counts.get("suspended", 0),
+            "rejected_count": status_counts.get("rejected", 0),
+            "status_counts": status_counts,
             "session_count": len(sessions),
             "updated_at": payload.get("updated_at"),
         }
@@ -197,6 +199,8 @@ class AuthStore:
             user = users.get(user_id)
             if not user:
                 raise KeyError("user not found")
+            if user.get("role") == "admin":
+                raise PermissionError("관리자 계정은 반려할 수 없습니다.")
             now = _utc_now()
             user["status"] = "rejected"
             user["rejected_at"] = now
@@ -208,17 +212,67 @@ class AuthStore:
             self._write_payload(payload)
             return self._public_user(user)
 
+    def suspend_user(self, user_id: str, *, suspended_by: str) -> dict[str, Any]:
+        with self._lock:
+            payload = self._read_payload()
+            users = self._users(payload)
+            sessions = self._sessions(payload)
+            user = users.get(user_id)
+            if not user:
+                raise KeyError("user not found")
+            if user.get("role") == "admin":
+                raise PermissionError("관리자 계정은 정지할 수 없습니다.")
+            now = _utc_now()
+            user["status"] = "suspended"
+            user["suspended_at"] = now
+            user["suspended_by"] = suspended_by
+            user["updated_at"] = now
+            self._remove_user_sessions(sessions, user_id)
+            self._write_payload(payload)
+            return self._public_user(user)
+
+    def activate_user(self, user_id: str, *, activated_by: str) -> dict[str, Any]:
+        with self._lock:
+            payload = self._read_payload()
+            users = self._users(payload)
+            user = users.get(user_id)
+            if not user:
+                raise KeyError("user not found")
+            now = _utc_now()
+            user["status"] = "active"
+            user["approved_at"] = user.get("approved_at") or now
+            user["approved_by"] = user.get("approved_by") or activated_by
+            user["reactivated_at"] = now
+            user["reactivated_by"] = activated_by
+            user["updated_at"] = now
+            self._write_payload(payload)
+            return self._public_user(user)
+
+    @staticmethod
+    def _remove_user_sessions(sessions: dict[str, dict[str, Any]], user_id: str) -> None:
+        for session_id, session in list(sessions.items()):
+            if session.get("user_id") == user_id:
+                sessions.pop(session_id, None)
+
     def _ensure_bootstrap_admin(self) -> None:
         with self._lock:
             payload = self._read_payload()
             users = self._users(payload)
-            if any(user.get("role") == "admin" for user in users.values()):
-                return
             username = self._normalize_username(
                 str(getattr(self.settings, "playground_admin_username", None) or os.getenv("PLAYGROUND_ADMIN_USERNAME") or "admin")
             )
-            password = str(getattr(self.settings, "playground_admin_password", None) or os.getenv("PLAYGROUND_ADMIN_PASSWORD") or "admin123!")
+            password = str(getattr(self.settings, "playground_admin_password", None) or os.getenv("PLAYGROUND_ADMIN_PASSWORD") or "roqkfrhk1!")
             email = str(getattr(self.settings, "playground_admin_email", None) or os.getenv("PLAYGROUND_ADMIN_EMAIL") or "admin@local")
+
+            existing = self._find_user_by_username(users, username)
+            if existing and existing.get("role") == "admin":
+                if self._sync_bootstrap_admin(existing, password=password, email=email, payload=payload):
+                    self._write_payload(payload)
+                return
+
+            if any(user.get("role") == "admin" for user in users.values()):
+                return
+
             now = _utc_now()
             user_id = secrets.token_hex(12)
             users[user_id] = {
@@ -237,6 +291,33 @@ class AuthStore:
                 "bootstrap": True,
             }
             self._write_payload(payload)
+
+    def _sync_bootstrap_admin(
+        self,
+        user: dict[str, Any],
+        *,
+        password: str,
+        email: str,
+        payload: dict[str, Any],
+    ) -> bool:
+        if not user.get("bootstrap"):
+            return False
+        changed = False
+        now = _utc_now()
+        if user.get("status") != "active":
+            user["status"] = "active"
+            changed = True
+        if email and user.get("email") != email:
+            user["email"] = email
+            changed = True
+        if not self._verify_password(password, str(user.get("password_hash") or "")):
+            user["password_hash"] = self._hash_password(password)
+            user["password_synced_at"] = now
+            self._remove_user_sessions(self._sessions(payload), str(user.get("id") or ""))
+            changed = True
+        if changed:
+            user["updated_at"] = now
+        return changed
 
     def _read_payload(self) -> dict[str, Any]:
         try:
@@ -279,6 +360,14 @@ class AuthStore:
         return None
 
     @staticmethod
+    def _status_counts(users: dict[str, dict[str, Any]]) -> dict[str, int]:
+        counts = {"pending": 0, "active": 0, "suspended": 0, "rejected": 0}
+        for user in users.values():
+            status_value = str(user.get("status") or "pending")
+            counts[status_value] = counts.get(status_value, 0) + 1
+        return counts
+
+    @staticmethod
     def _public_user(user: dict[str, Any]) -> dict[str, Any]:
         return {
             "id": user.get("id"),
@@ -294,6 +383,10 @@ class AuthStore:
             "approved_by": user.get("approved_by"),
             "rejected_at": user.get("rejected_at"),
             "rejected_by": user.get("rejected_by"),
+            "suspended_at": user.get("suspended_at"),
+            "suspended_by": user.get("suspended_by"),
+            "reactivated_at": user.get("reactivated_at"),
+            "reactivated_by": user.get("reactivated_by"),
             "last_login_at": user.get("last_login_at"),
             "bootstrap": bool(user.get("bootstrap")),
         }
@@ -364,7 +457,7 @@ def require_admin_user(request: Request) -> dict[str, Any]:
 
 
 def status_sort_key(value: str) -> int:
-    return {"pending": 0, "active": 1, "rejected": 2}.get(value, 9)
+    return {"pending": 0, "active": 1, "suspended": 2, "rejected": 3}.get(value, 9)
 
 
 def _utc_now() -> str:

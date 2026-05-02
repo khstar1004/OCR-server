@@ -3,18 +3,39 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>army-ocr Docs</title>
+  <title>Army-OCR Docs</title>
   <base href="__PLAYGROUND_BASE__">
   <link rel="stylesheet" href="assets/playground.css">
 </head>
 <body class="docs-body">
   <div class="docs-shell">
     <aside class="docs-sidebar">
-      <div class="docs-brand"><span class="brand-mark">a</span><span>army-ocr</span></div>
+      <div class="docs-brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="24" height="24" focusable="false" aria-hidden="true">
+            <defs>
+              <linearGradient id="ocrGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#7C3AED" />
+                <stop offset="100%" stop-color="#2DD4BF" />
+              </linearGradient>
+            </defs>
+            <circle cx="60" cy="60" r="18" fill="none" stroke="url(#ocrGradient)" stroke-width="5" />
+            <circle cx="60" cy="60" r="6" fill="url(#ocrGradient)" />
+            <g stroke="url(#ocrGradient)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none">
+              <path d="M 35 35 L 25 35 L 25 45" />
+              <path d="M 85 35 L 95 35 L 95 45" />
+              <path d="M 25 75 L 25 85 L 35 85" />
+              <path d="M 95 75 L 95 85 L 85 85" />
+            </g>
+            <line x1="15" y1="60" x2="105" y2="60" stroke="#2DD4BF" stroke-width="2" opacity="0.6" stroke-dasharray="4 4" />
+          </svg>
+        </span>
+        <span>Army-OCR</span>
+      </div>
       <div class="docs-search">Search OCR docs...</div>
       <nav class="docs-side-nav" aria-label="Documentation sections">
         <p>Guides</p>
-        <a class="active" href="docs#overview">모델 개요</a>
+        <a class="active" href="docs#overview">엔진 개요</a>
         <a href="docs#contract">API 계약</a>
         <a href="docs#quickstart">Quickstart</a>
         <a href="docs#sync-vs-async">동기/비동기</a>
@@ -50,18 +71,18 @@
 
       <main class="docs-content">
         <article class="docs-article">
-          <p class="docs-eyebrow" id="overview">Model Overview</p>
-          <h1>army-ocr 모델/API</h1>
+          <p class="docs-eyebrow" id="overview">Engine Overview</p>
+          <h1>Army-OCR 엔진/API</h1>
           <p class="docs-lead">
-            army-ocr은 Chandra OCR 모델을 문서 처리 서버로 감싼 범용 OCR API입니다.
+            Army-OCR은 문서 처리용으로 최적화된 범용 OCR API입니다.
             PDF와 이미지에서 텍스트뿐 아니라 문서 구조, 블록 좌표, 이미지 영역까지 추출해
             검색, RAG, 문서 자동화, 국회 문서 처리 같은 후속 시스템에서 바로 쓸 수 있는 형태로 반환합니다.
           </p>
 
           <div class="model-summary-grid">
             <article>
-              <span>Model</span>
-              <strong>Chandra OCR 2</strong>
+              <span>Engine</span>
+              <strong>Army-OCR</strong>
               <p>문서 이미지 기반 OCR 및 layout block 추출</p>
             </article>
             <article>
@@ -77,15 +98,15 @@
           </div>
 
           <p>
-            이 문서의 주제는 <strong>OCR 모델과 범용 OCR API</strong>입니다. 국회 OCR은 이 API의 결과를
-            국회 문서 업무에 맞게 재가공한 특화 레이어입니다. 브라우저 체험 화면은 모델을 테스트하기 위한
+            이 문서의 주제는 <strong>OCR 엔진과 범용 OCR API</strong>입니다. 국회 OCR은 이 API의 결과를
+            국회 문서 업무에 맞게 재가공한 특화 레이어입니다. 브라우저 체험 화면은 엔진을 테스트하기 위한
             보조 UI일 뿐, 외부 연동 계약의 중심은 <code>/api/v1/*</code>입니다.
           </p>
 
           <h2 id="contract">API 계약</h2>
           <p>
             현재 공개된 API Guide는 FastAPI OpenAPI에 실제 등록된 endpoint만 기준으로 작성합니다.
-            Datalab에 있는 전체 제품 API를 그대로 노출하지 않고, 이 OCR 서비스에 구현된 OCR/문서/파일/컬렉션/템플릿/평가/배치/워크플로우 기능만 다룹니다.
+            외부 계약에 포함된 범위만 노출하고, 이 OCR 서비스에 구현된 OCR/문서/파일/컬렉션/템플릿/평가/배치/워크플로우 기능만 다룹니다.
           </p>
           <div class="docs-info-grid">
             <article>
@@ -118,7 +139,6 @@ curl http://127.0.0.1:18110/api/v1/capabilities
 curl -X POST http://127.0.0.1:18110/api/v1/marker \
   -F "file=@sample.pdf" \
   -F "output_format=json,markdown,html,chunks" \
-  -F "page_range=0" \
   -F "mode=balanced"
 
 curl http://127.0.0.1:18110/api/v1/marker/{request_id}</code></pre>
@@ -168,7 +188,7 @@ GET  /api/v1/batch_runs/{batch_run_id}/results</code></pre>
           <ol class="docs-steps">
             <li><strong>입력 수신</strong><span>업로드 파일 또는 <code>file_url</code>을 받습니다.</span></li>
             <li><strong>페이지 렌더링</strong><span>PDF는 페이지 이미지로 렌더링하고, 이미지는 그대로 사용합니다.</span></li>
-            <li><strong>Chandra OCR</strong><span>vLLM 또는 HF runner를 통해 OCR/layout 추론을 실행합니다.</span></li>
+            <li><strong>Army-OCR</strong><span>vLLM 또는 로컬 runner를 통해 OCR/layout 추론을 실행합니다.</span></li>
             <li><strong>구조화</strong><span>블록, bbox, 텍스트, Markdown, HTML, chunks를 구성합니다.</span></li>
             <li><strong>결과 저장</strong><span>요청별 <code>request_id</code> 디렉터리에 결과와 이미지 산출물을 분리 저장합니다.</span></li>
           </ol>
@@ -241,7 +261,7 @@ images/page-0001-image-0001.png</code></pre>
             <code>OCR_MAX_CONCURRENT_REQUESTS</code>를 같이 조정해야 합니다.
           </p>
           <p>
-            timeout, Chandra prompt/batch, playground 기본 쪽수, 업로드 제한, 국회 API 주소,
+            timeout, OCR prompt/batch, playground 기본 쪽수, 업로드 제한, 국회 API 주소,
             LLM 후처리 주소, 감시 폴더 polling 값처럼 자주 바뀌는 값은
             <code>/playground/admin</code> 관리자 페이지 또는 관리자 세션을 가진 <code>/playground/api/admin/runtime-settings</code>에서 저장합니다.
             Docker/k8s 기본 저장 위치는 <code>/data/runtime/runtime-config/settings.json</code>이며, 이미지를 다시 만들지 않고 새 요청부터 반영됩니다.
@@ -252,8 +272,8 @@ images/page-0001-image-0001.png</code></pre>
 
           <h2 id="demo-ui">체험 UI</h2>
           <p>
-            <code>/playground/</code>는 모델/API를 직접 호출하기 전에 결과 품질과 출력 형식을 눈으로 확인하는 웹 클라이언트입니다.
-            제품 설명과 연동 문서는 OCR 모델/API를 기준으로 읽고, UI는 데모와 QA 용도로 사용하면 됩니다.
+            <code>/playground/</code>는 엔진/API를 직접 호출하기 전에 결과 품질과 출력 형식을 눈으로 확인하는 웹 클라이언트입니다.
+            제품 설명과 연동 문서는 OCR 엔진/API를 기준으로 읽고, UI는 데모와 QA 용도로 사용하면 됩니다.
             UI는 긴 OCR 요청이 브라우저 요청 하나에 묶이지 않도록 <code>/playground/api/convert/start</code>로 제출하고
             <code>/playground/api/convert/{request_id}</code>로 상태를 확인합니다.
           </p>
@@ -261,7 +281,7 @@ images/page-0001-image-0001.png</code></pre>
 
         <aside class="docs-toc">
           <p>On this page</p>
-          <a href="docs#overview">모델 개요</a>
+          <a href="docs#overview">엔진 개요</a>
           <a href="docs#contract">API 계약</a>
           <a href="docs#quickstart">Quickstart</a>
           <a href="docs#sync-vs-async">동기/비동기</a>

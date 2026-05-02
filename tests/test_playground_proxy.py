@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import importlib
+import json
 import sys
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -16,7 +18,7 @@ def _reset_app_modules() -> None:
 def _login_admin(client: TestClient) -> None:
     response = client.post(
         "/playground/api/auth/login",
-        json={"username": "admin", "password": "admin123!"},
+        json={"username": "admin", "password": "roqkfrhk1!"},
     )
     assert response.status_code == 200
 
@@ -130,9 +132,31 @@ def test_playground_proxy_account_approval_flow(tmp_path, monkeypatch) -> None:
 
         _login_admin(client)
         assert client.get("/playground/admin").status_code == 200
+        overview = client.get("/playground/api/admin/overview")
+        assert overview.status_code == 200
+        assert overview.json()["auth"]["pending_count"] == 1
         users = client.get("/playground/api/admin/users")
         assert any(user["username"] == "worker1" for user in users.json()["users"])
         assert client.post(f"/playground/api/admin/users/{user_id}/approve").status_code == 200
+        assert client.post(f"/playground/api/admin/users/{user_id}/suspend").json()["user"]["status"] == "suspended"
+        assert client.post(f"/playground/api/admin/users/{user_id}/activate").json()["user"]["status"] == "active"
+
+
+def test_bootstrap_admin_password_syncs_existing_store(tmp_path, monkeypatch) -> None:
+    _reset_app_modules()
+    monkeypatch.setenv("AUTH_STORE_PATH", str(tmp_path / "auth.json"))
+    monkeypatch.setenv("PLAYGROUND_ADMIN_PASSWORD", "oldpass123!")
+
+    config = importlib.import_module("app.core.config")
+    auth_store = importlib.import_module("app.services.auth_store")
+    first_store = auth_store.AuthStore(config.Settings())
+    assert first_store.authenticate("admin", "oldpass123!")["role"] == "admin"
+
+    monkeypatch.setenv("PLAYGROUND_ADMIN_PASSWORD", "roqkfrhk1!")
+    second_store = auth_store.AuthStore(config.Settings())
+    assert second_store.authenticate("admin", "roqkfrhk1!")["role"] == "admin"
+    with pytest.raises(ValueError):
+        second_store.authenticate("admin", "oldpass123!")
 
 
 def test_playground_proxy_forwards_history(monkeypatch) -> None:
@@ -166,3 +190,32 @@ def test_playground_proxy_forwards_history(monkeypatch) -> None:
         assert response.status_code == 200
         assert response.json()["items"][0]["request_id"] == "abc123"
         assert calls == [("GET", "/playground/api/history", "limit=5", b"")]
+
+
+def test_playground_proxy_forwards_block_edits(monkeypatch) -> None:
+    _reset_app_modules()
+    monkeypatch.setenv("PLAYGROUND_UPSTREAM_BASE_URL", "http://a-cong-ocr-service:5000")
+
+    proxy = importlib.import_module("app.playground_proxy")
+    calls = []
+
+    async def fake_upstream_request(request, method: str, path: str, *, content: bytes):
+        calls.append((method, path, request.url.query, content))
+        return httpx.Response(200, json={"success": True, "request_id": "abc123", "pages": []})
+
+    monkeypatch.setattr(proxy, "_upstream_request", fake_upstream_request)
+
+    with TestClient(proxy.create_app()) as client:
+        response = client.put(
+            "/playground/api/convert/abc123/blocks/29/6",
+            json={"label": "text", "text": "수정본"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+        assert len(calls) == 1
+        method, path, query, content = calls[0]
+        assert method == "PUT"
+        assert path == "/playground/api/convert/abc123/blocks/29/6"
+        assert query == ""
+        assert json.loads(content.decode("utf-8")) == {"label": "text", "text": "수정본"}

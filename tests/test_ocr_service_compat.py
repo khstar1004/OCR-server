@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import importlib
 import io
 import json
@@ -8,6 +9,7 @@ import zipfile
 from contextlib import contextmanager
 from pathlib import Path
 from time import sleep
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -26,10 +28,45 @@ def _png_bytes(size: tuple[int, int] = (640, 480), color: str = "white") -> byte
     return buffer.getvalue()
 
 
+def _install_fake_fitz(monkeypatch, *, page_count: int = 3) -> None:
+    class FakeMatrix:
+        def __init__(self, scale_x: float, scale_y: float) -> None:
+            self.scale_x = scale_x
+            self.scale_y = scale_y
+
+    class FakePixmap:
+        def __init__(self, width: int, height: int) -> None:
+            self.width = width
+            self.height = height
+
+        def save(self, path: str) -> None:
+            Image.new("RGB", (self.width, self.height), color="white").save(path)
+
+    class FakePage:
+        def get_pixmap(self, *, matrix: FakeMatrix, alpha: bool = False) -> FakePixmap:
+            return FakePixmap(width=int(600 * matrix.scale_x), height=int(900 * matrix.scale_y))
+
+    class FakeDocument:
+        def __init__(self) -> None:
+            self.page_count = page_count
+
+        def load_page(self, index: int) -> FakePage:
+            return FakePage()
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setitem(
+        sys.modules,
+        "fitz",
+        SimpleNamespace(Matrix=FakeMatrix, open=lambda path: FakeDocument()),
+    )
+
+
 def _login_admin(client: TestClient) -> None:
     response = client.post(
         "/playground/api/auth/login",
-        json={"username": "admin", "password": "admin123!"},
+        json={"username": "admin", "password": "roqkfrhk1!"},
     )
     assert response.status_code == 200
     assert response.json()["user"]["role"] == "admin"
@@ -145,7 +182,10 @@ def test_ocr_capabilities_and_clean_image_response(tmp_path: Path, monkeypatch) 
         assert capabilities_payload["features"]["request_runtime_metadata"] is True
         assert capabilities_payload["features"]["request_retention_cleanup"] is True
         assert capabilities_payload["endpoints"]["request_cleanup"] == "/api/v1/requests"
-        assert capabilities_payload["features"]["tables"] is False
+        assert capabilities_payload["features"]["tables"] is True
+        assert {"table", "footnote", "equation_block", "list_group", "form"} <= set(
+            capabilities_payload["features"]["layout_block_labels"]
+        )
 
         response = client.post(
             "/api/v1/ocr/image",
@@ -243,6 +283,10 @@ def test_playground_account_signup_requires_admin_approval(tmp_path: Path, monke
         users = client.get("/playground/api/admin/users")
         assert users.status_code == 200
         assert any(item["username"] == "analyst1" and item["status"] == "pending" for item in users.json()["users"])
+        overview = client.get("/playground/api/admin/overview")
+        assert overview.status_code == 200
+        assert overview.json()["auth"]["pending_count"] >= 1
+        assert "restart_required_override_count" in overview.json()["runtime"]
         approve = client.post(f"/playground/api/admin/users/{user_id}/approve")
         assert approve.status_code == 200
         assert approve.json()["user"]["status"] == "active"
@@ -257,6 +301,22 @@ def test_playground_account_signup_requires_admin_approval(tmp_path: Path, monke
         assert active_login.json()["user"]["role"] == "user"
         forbidden = client.get("/playground/api/admin/users")
         assert forbidden.status_code == 403
+
+        _login_admin(client)
+        suspend = client.post(f"/playground/api/admin/users/{user_id}/suspend")
+        assert suspend.status_code == 200
+        assert suspend.json()["user"]["status"] == "suspended"
+        client.post("/playground/api/auth/logout")
+        suspended_login = client.post(
+            "/playground/api/auth/login",
+            json={"username": "analyst1", "password": "strongpass1"},
+        )
+        assert suspended_login.status_code == 403
+
+        _login_admin(client)
+        activate = client.post(f"/playground/api/admin/users/{user_id}/activate")
+        assert activate.status_code == 200
+        assert activate.json()["user"]["status"] == "active"
 
 
 def test_compat_marker_and_thumbnails(tmp_path: Path, monkeypatch) -> None:
@@ -289,11 +349,13 @@ def test_playground_convert_and_download_include_images(tmp_path: Path, monkeypa
     with _compat_client(tmp_path, monkeypatch) as client:
         page = client.get("/playground")
         assert page.status_code == 200
-        assert "army-ocr Playground" in page.text
+        assert "Army-OCR Playground" in page.text
         assert "차트 읽기" in page.text
         assert "Chart Understanding" not in page.text
         assert 'id="fileInput" name="file" type="file"' in page.text
         assert "multiple hidden" in page.text
+        assert 'id="pageRange" name="page_range" value=""' in page.text
+        assert 'name="max_pages" value="10"' not in page.text
         assert 'id="fileList"' in page.text
         assert "__PLAYGROUND_BASE__" not in page.text
         assert 'href="/playground/docs"' in page.text
@@ -318,18 +380,24 @@ def test_playground_convert_and_download_include_images(tmp_path: Path, monkeypa
         script = client.get("/playground/assets/playground.js")
         assert script.status_code == 200
         assert "api/history?limit=80" in script.text
+        assert "data-block-key" in script.text
+        assert "syncLinkedBlockHighlights" in script.text
+        css = client.get("/playground/assets/playground.css")
+        assert css.status_code == 200
+        assert ".bbox.is-linked-active" in css.text
+        assert ".block-card.is-linked-active" in css.text
         guide = client.get("/playground/docs")
         assert guide.status_code == 200
         assert '<base href="/playground/">' in guide.text
-        assert "army-ocr 모델/API" in guide.text
+        assert "Army-OCR 엔진/API" in guide.text
         api_guide = client.get("/playground/api-guide")
         assert api_guide.status_code == 200
-        assert "army-ocr API Guide" in api_guide.text
+        assert "Army-OCR API Guide" in api_guide.text
         assert "Reusable File Flow" in api_guide.text
         assert "unimplemented Datalab-only APIs" in api_guide.text
         api_reference = client.get("/playground/api-reference")
         assert api_reference.status_code == 200
-        assert "army-ocr API Reference" in api_reference.text
+        assert "Army-OCR API Reference" in api_reference.text
         assert "Create Collection" in api_reference.text
         assert "Generate Schemas" in api_reference.text
         assert "Score Extraction" in api_reference.text
@@ -338,7 +406,7 @@ def test_playground_convert_and_download_include_images(tmp_path: Path, monkeypa
         assert "Table Recognition" not in api_reference.text
         guide_md = client.get("/playground/api-guide.md")
         assert guide_md.status_code == 200
-        assert "# army-ocr API Guide" in guide_md.text
+        assert "# Army-OCR API Guide" in guide_md.text
         assert "Python polling 예시" in guide_md.text
 
         resources = client.get("/playground/api/resources")
@@ -395,6 +463,7 @@ def test_playground_convert_and_download_include_images(tmp_path: Path, monkeypa
         assert payload["pages"][0]["image_url"].endswith("/page-0001.png")
         assert f"api/images/{payload['request_id']}/page-0001-image-0001.png" in payload["views"]["markdown"]
         assert "ocr_assets" in payload["views"]["json"]
+        assert "runtime" in payload["pages"][0]
 
         history = client.get("/playground/api/history")
         assert history.status_code == 200
@@ -420,7 +489,7 @@ def test_playground_convert_and_download_include_images(tmp_path: Path, monkeypa
         download = client.get(f"/playground/api/download/{payload['request_id']}")
         assert download.status_code == 200
         assert download.headers["content-type"] == "application/zip"
-        assert "army-ocr-result-" in download.headers["content-disposition"]
+        assert "Army-OCR-result-" in download.headers["content-disposition"]
         with zipfile.ZipFile(io.BytesIO(download.content)) as archive:
             names = set(archive.namelist())
             assert "result.md" in names
@@ -516,6 +585,114 @@ def test_playground_convert_status_returns_partial_pages(tmp_path: Path, monkeyp
         assert "중간 결과 제목" in payload["views"]["markdown"]
 
 
+def test_playground_block_edits_persist_in_result_and_zip(tmp_path: Path, monkeypatch) -> None:
+    with _compat_client(tmp_path, monkeypatch) as client:
+        response = client.post(
+            "/playground/api/convert",
+            files={"file": ("page.png", _png_bytes(), "image/png")},
+            data={"page_range": "0-9", "mode": "balanced", "skip_cache": "true"},
+        )
+        assert response.status_code == 200
+        request_id = response.json()["request_id"]
+
+        table_edit = client.put(
+            f"/playground/api/convert/{request_id}/blocks/0/1",
+            json={
+                "label": "table",
+                "text": "",
+                "table_rows": [["항목", "값"], ["부대", "수도방위사령부"]],
+            },
+        )
+        assert table_edit.status_code == 200
+        table_payload = table_edit.json()
+        edited_table = table_payload["pages"][0]["blocks"][1]
+        assert edited_table["label"] == "table"
+        assert edited_table["metadata"]["table_rows"][1][1] == "수도방위사령부"
+
+        image_data_url = "data:image/png;base64," + base64.b64encode(_png_bytes((32, 24), "black")).decode("ascii")
+        image_edit = client.put(
+            f"/playground/api/convert/{request_id}/blocks/0/2",
+            json={
+                "label": "image",
+                "text": "직접 캡쳐한 그림",
+                "image": {"data_url": image_data_url, "file_name": "capture.png", "media_type": "image/png"},
+            },
+        )
+        assert image_edit.status_code == 200
+        payload = image_edit.json()
+        manual_asset = next(asset for asset in payload["assets"] if asset["kind"] == "manual")
+        assert manual_asset["name"].startswith("manual-page-0001-block-0003")
+
+        manual_image = client.get(f"/playground/api/images/{request_id}/{manual_asset['name']}")
+        assert manual_image.status_code == 200
+        assert Image.open(io.BytesIO(manual_image.content)).size == (32, 24)
+
+        result = client.get(f"/playground/api/convert/{request_id}")
+        assert result.status_code == 200
+        result_payload = result.json()
+        assert result_payload["pages"][0]["blocks"][1]["text"].startswith("항목\t값")
+        assert result_payload["pages"][0]["blocks"][2]["metadata"]["playground_edit"]["manual_image"]["name"] == manual_asset["name"]
+
+        download = client.get(f"/playground/api/download/{request_id}")
+        assert download.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(download.content)) as archive:
+            names = set(archive.namelist())
+            assert f"images/{manual_asset['name']}" in names
+            markdown = archive.read("result.md").decode("utf-8")
+            html = archive.read("result.html").decode("utf-8")
+            assert "| 항목 | 값 |" in markdown
+            assert "직접 캡쳐한 그림" in markdown
+            assert "수도방위사령부" in html
+
+
+def test_playground_defaults_to_all_pdf_pages_and_balanced_dpi(tmp_path: Path, monkeypatch) -> None:
+    _install_fake_fitz(monkeypatch, page_count=3)
+
+    with _compat_client(tmp_path, monkeypatch) as client:
+        response = client.post(
+            "/playground/api/convert",
+            files={"file": ("multi.pdf", b"%PDF-1.4\n", "application/pdf")},
+            data={"mode": "balanced", "skip_cache": "true"},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["success"] is True
+        assert payload["page_count"] == 3
+        assert payload["metadata"]["page_range"] is None
+        assert payload["metadata"]["max_pages"] is None
+        assert payload["pages"][0]["page_number"] == 1
+        assert payload["pages"][0]["width"] == 2000
+        assert payload["pages"][0]["height"] == 3000
+        assert payload["pages"][0]["runtime"]["duration_ms"] >= 0
+        assert payload["pages"][2]["page_number"] == 3
+        assert len(payload["metadata"]["page_runtimes"]) == 3
+
+
+def test_playground_history_marks_stale_processing_success_as_complete(tmp_path: Path, monkeypatch) -> None:
+    with _compat_client(tmp_path, monkeypatch) as client:
+        response = client.post(
+            "/playground/api/convert",
+            files={"file": ("page.png", _png_bytes(), "image/png")},
+            data={"page_range": "0-9", "mode": "balanced", "skip_cache": "true"},
+        )
+        assert response.status_code == 200
+        request_id = response.json()["request_id"]
+        record_path = tmp_path / "output" / "_compat_api" / "requests" / request_id / "record.json"
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        record["status"] = "processing"
+        record["result"]["status"] = "processing"
+        record["result"]["success"] = True
+        record["result"]["runtime"]["status"] = "complete"
+        record_path.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+
+        history = client.get("/playground/api/history")
+
+        assert history.status_code == 200
+        item = next(item for item in history.json()["items"] if item["request_id"] == request_id)
+        assert item["status"] == "complete"
+
+
 def test_playground_admin_page_requires_login(tmp_path: Path, monkeypatch) -> None:
     with _compat_client(tmp_path, monkeypatch) as client:
         redirected = client.get("/playground/admin", follow_redirects=False)
@@ -527,7 +704,7 @@ def test_playground_admin_page_requires_login(tmp_path: Path, monkeypatch) -> No
         _login_admin(client)
         admin_page = client.get("/playground/admin")
         assert admin_page.status_code == 200
-        assert "army-ocr 관리자 페이지" in admin_page.text
+        assert "Army-OCR 관리자 페이지" in admin_page.text
 
 
 def test_playground_links_follow_root_path_when_forwarded_prefix_is_missing(tmp_path: Path, monkeypatch) -> None:

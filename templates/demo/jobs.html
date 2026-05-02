@@ -17,6 +17,7 @@
     <form method="post" action="{{ url_path('/demo/jobs/refresh-archive?view=' ~ selected_view) }}">
       <button class="toolbar-button" type="submit">결과 복구</button>
     </form>
+    <button class="toolbar-button" type="button" data-reset-launcher>입력 초기화</button>
     <a class="toolbar-button" href="{{ url_path('/docs') }}" target="_blank" rel="noreferrer">연동 문서</a>
   </div>
   <div class="hero-meta">
@@ -41,7 +42,7 @@
   </div>
 </header>
 
-<section class="panel launcher-panel forge-config-panel">
+<section class="panel launcher-panel forge-config-panel" id="launcherPanel">
   <div class="launcher-panel-head">
     <div>
       <p class="panel-kicker">설정</p>
@@ -169,12 +170,15 @@
   </div>
 </section>
 
-<section class="panel job-finder-panel" data-job-finder>
-  <div class="job-finder-head">
+<details class="panel job-finder-panel collapsible-panel" data-job-finder>
+  <summary class="collapsible-panel-summary">
     <div>
       <p class="panel-kicker">작업 찾기</p>
       <h2>최근 작업</h2>
     </div>
+    <span class="toolbar-button toolbar-button--compact">펼치기</span>
+  </summary>
+  <div class="job-finder-head">
     <label class="job-search-field">
       <span>검색</span>
       <input type="search" data-job-search placeholder="파일명, 작업 번호, 상태">
@@ -200,7 +204,7 @@
   {% else %}
   <p class="job-finder-empty">아직 작업이 없습니다.</p>
   {% endif %}
-</section>
+</details>
 
 {% include "demo/_jobs_content.html" %}
 
@@ -451,6 +455,22 @@
       return window.prompt('삭제하려면 "삭제"라고 입력하세요.') === "삭제";
     };
 
+    function resetLauncherInputs() {
+      clearTimer();
+      document.querySelectorAll("input[type='file'][data-upload-input]").forEach((input) => {
+        input.value = "";
+        buildSelectionPreview(input);
+      });
+      const launcherPanel = document.getElementById("launcherPanel");
+      if (launcherPanel) {
+        launcherPanel.scrollIntoView({ block: "start", behavior: "smooth" });
+      }
+      const firstUploadInput = document.querySelector("input[type='file'][data-upload-input]");
+      if (firstUploadInput) {
+        window.setTimeout(() => firstUploadInput.focus(), 250);
+      }
+    };
+
     async function refreshJobsContent() {
       const seconds = refreshSeconds();
       if (!seconds || state.inFlight) {
@@ -530,6 +550,11 @@
         const presetButton = event.target.closest("[data-preset]");
         if (presetButton) {
           applyPreset(presetButton.dataset.preset || "default", true);
+          return;
+        }
+        const resetButton = event.target.closest("[data-reset-launcher]");
+        if (resetButton) {
+          resetLauncherInputs();
         }
       });
       document.addEventListener("submit", (event) => {

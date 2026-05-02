@@ -1,10 +1,10 @@
-# army-ocr API Guide
+# Army-OCR API Guide
 
 작성 기준: 현재 저장소의 `app/ocr_service.py`, `app/api/playground.py`, `app/services/datalab_compat.py`, `app/services/datalab_defense.py`
 
 ## 1. 모델 개요
 
-army-ocr은 Chandra OCR 모델을 서버 API로 제공하는 범용 문서 OCR 시스템입니다.
+Army-OCR은 Chandra OCR 모델을 서버 API로 제공하는 범용 문서 OCR 시스템입니다.
 
 이 API는 단순히 이미지에서 글자만 읽는 것이 아니라, 문서 페이지를 구조화된 데이터로 바꿉니다.
 
@@ -66,7 +66,6 @@ curl http://127.0.0.1:18110/api/v1/capabilities
 curl -X POST "http://127.0.0.1:18110/api/v1/marker" \
   -F "file=@sample.pdf" \
   -F "output_format=json,markdown,html,chunks" \
-  -F "page_range=0" \
   -F "mode=balanced"
 ```
 
@@ -90,7 +89,6 @@ with open("sample.pdf", "rb") as file:
         files={"file": file},
         data={
             "output_format": "json,markdown,html,chunks",
-            "page_range": "0",
             "mode": "balanced",
         },
     ).json()
@@ -307,9 +305,12 @@ Form fields:
 | `POST` | `/playground/api/auth/login` | 승인된 사용자 로그인 |
 | `POST` | `/playground/api/auth/logout` | 로그아웃 |
 | `GET` | `/playground/api/auth/me` | 현재 로그인 상태 확인 |
+| `GET` | `/playground/api/admin/overview` | 관리자 전용 대시보드 요약. 계정/세션/설정/서비스 상태 |
 | `GET` | `/playground/api/admin/users` | 관리자 전용 계정 목록 |
 | `POST` | `/playground/api/admin/users/{user_id}/approve` | 관리자 전용 계정 승인 |
 | `POST` | `/playground/api/admin/users/{user_id}/reject` | 관리자 전용 계정 반려 |
+| `POST` | `/playground/api/admin/users/{user_id}/suspend` | 관리자 전용 계정 정지. 기존 세션 제거 |
+| `POST` | `/playground/api/admin/users/{user_id}/activate` | 관리자 전용 계정 재활성화 |
 | `GET` | `/playground/api/admin/runtime-settings` | 관리자 전용 운영 설정 조회 |
 | `PUT` | `/playground/api/admin/runtime-settings` | 관리자 전용 운영 설정 저장 |
 
@@ -473,6 +474,12 @@ curl "http://127.0.0.1:18110/api/v1/workflows/executions/{execution_id}"
 | `GET` | `/playground/api/download/{request_id}` | 이미지 포함 ZIP 다운로드 |
 | `GET` | `/playground/api/auth/me` | 로그인 상태 확인 |
 | `POST` | `/playground/api/auth/signup` | 계정 신청 |
+| `GET` | `/playground/api/admin/overview` | 관리자 대시보드 요약 |
+| `GET` | `/playground/api/admin/users` | 관리자 전용 계정 목록 |
+| `POST` | `/playground/api/admin/users/{user_id}/approve` | 계정 승인 |
+| `POST` | `/playground/api/admin/users/{user_id}/reject` | 계정 반려 |
+| `POST` | `/playground/api/admin/users/{user_id}/suspend` | 계정 정지 |
+| `POST` | `/playground/api/admin/users/{user_id}/activate` | 계정 재활성화 |
 | `GET` | `/playground/api/admin/runtime-settings` | 관리자 전용 운영 설정 조회 |
 | `PUT` | `/playground/api/admin/runtime-settings` | 관리자 전용 운영 설정 저장 |
 
@@ -504,6 +511,8 @@ curl "http://127.0.0.1:18110/api/v1/workflows/executions/{execution_id}"
 
 계정/세션 저장 위치는 `AUTH_STORE_PATH`입니다. Docker/k8s 기본값은 `/data/runtime/runtime-config/auth.json`입니다. 비밀번호는 PBKDF2 해시로 저장되고, 로그인 세션은 HttpOnly 쿠키로 관리됩니다.
 
+계정 상태는 `pending`, `active`, `suspended`, `rejected`로 관리합니다. `suspend`와 `reject`는 해당 사용자의 기존 세션을 제거하므로, 이미 로그인한 사용자도 다음 요청부터 접근할 수 없습니다. 관리자 계정은 UI/API에서 정지 또는 반려할 수 없도록 보호합니다.
+
 관리자 로그인:
 
 ```bash
@@ -527,7 +536,7 @@ curl -b cookies.txt -X PUT "$BASE_URL/playground/api/admin/runtime-settings" \
   -d '{
     "values": {
       "ocr_service_timeout_sec": 300,
-      "playground_default_max_pages": 20,
+      "playground_default_max_pages": 0,
       "playground_max_upload_mb": 1024,
       "target_api_base_url": "http://target-server:8000/news",
       "target_api_timeout_sec": 60
@@ -546,7 +555,7 @@ curl -b cookies.txt -X PUT "$BASE_URL/playground/api/admin/runtime-settings" \
 | `pdf_render_dpi` | 새 요청 | PDF를 페이지 이미지로 렌더링하는 DPI |
 | `chandra_prompt_type` | 새 요청 | Chandra OCR prompt type |
 | `chandra_batch_size` | 새 요청 | HF/local runner batch size |
-| `playground_default_max_pages` | 즉시 | 체험 UI 기본 최대 쪽수 |
+| `playground_default_max_pages` | 즉시 | playground에서 페이지 범위를 비웠을 때 적용할 최대 쪽수. 0이면 파일 전체 |
 | `playground_max_upload_mb` | 즉시 | 체험 UI 업로드 제한 |
 | `playground_upstream_base_url` | 새 요청 | 분리된 playground proxy가 호출할 OCR API 주소 |
 | `llm_base_url` | 새 요청 | 국회 기사 후처리 LLM base URL, 비우면 휴리스틱 |
@@ -571,7 +580,7 @@ curl -b cookies.txt -X PUT "$BASE_URL/playground/api/admin/runtime-settings" \
 ## 18. 제한사항
 
 - 중심 기능은 Chandra OCR 기반 범용 OCR/문서 변환입니다.
-- `forms`, `queries`, `selection_marks`, 완전한 table recognition은 capabilities에서 `false`로 표시됩니다.
+- `queries`, `selection_marks`는 capabilities에서 `false`로 표시됩니다. 표/양식/목록/수식/코드/각주 등 Chandra `ocr_layout` 라벨은 `layout_block_labels`에 표시되는 canonical label로 보존하지만, 별도 table recognition 전용 API는 제공하지 않습니다.
 - 파일/컬렉션/템플릿/평가/배치 계열은 로컬 JSON/파일시스템 기반 구현입니다.
 - Track Changes, Form Filling, Extraction Schema 등은 현재 OCR 결과와 JSON/text 기반 보조 기능입니다.
 - Datalab의 custom processor 전체 버전관리, transfer/archive/restore, table recognition 전용 API는 현재 구현된 OCR 서비스 API가 아니므로 이 Guide에 endpoint로 넣지 않습니다.

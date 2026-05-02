@@ -3,14 +3,35 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>army-ocr API Reference</title>
+  <title>Army-OCR API Reference</title>
   <base href="__PLAYGROUND_BASE__">
   <link rel="stylesheet" href="assets/playground.css">
 </head>
 <body class="docs-body">
   <div class="docs-shell">
     <aside class="docs-sidebar">
-      <div class="docs-brand"><span class="brand-mark">a</span><span>army-ocr</span></div>
+      <div class="docs-brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="24" height="24" focusable="false" aria-hidden="true">
+            <defs>
+              <linearGradient id="ocrGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#7C3AED" />
+                <stop offset="100%" stop-color="#2DD4BF" />
+              </linearGradient>
+            </defs>
+            <circle cx="60" cy="60" r="18" fill="none" stroke="url(#ocrGradient)" stroke-width="5" />
+            <circle cx="60" cy="60" r="6" fill="url(#ocrGradient)" />
+            <g stroke="url(#ocrGradient)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none">
+              <path d="M 35 35 L 25 35 L 25 45" />
+              <path d="M 85 35 L 95 35 L 95 45" />
+              <path d="M 25 75 L 25 85 L 35 85" />
+              <path d="M 95 75 L 95 85 L 85 85" />
+            </g>
+            <line x1="15" y1="60" x2="105" y2="60" stroke="#2DD4BF" stroke-width="2" opacity="0.6" stroke-dasharray="4 4" />
+          </svg>
+        </span>
+        <span>Army-OCR</span>
+      </div>
       <div class="docs-search">Search OCR API...</div>
       <nav class="docs-side-nav" aria-label="API reference">
         <p>Core OCR</p>
@@ -20,6 +41,8 @@
         <a href="api-reference#runtime-settings"><span class="method put">PUT</span> Runtime Settings</a>
         <a href="api-reference#auth"><span class="method post">POST</span> Login</a>
         <a href="api-reference#auth"><span class="method post">POST</span> Signup</a>
+        <a href="api-reference#auth"><span class="method get">GET</span> Admin Overview</a>
+        <a href="api-reference#auth"><span class="method post">POST</span> User Suspend</a>
         <a href="api-reference#ocr-image"><span class="method post">POST</span> OCR Image</a>
         <a href="api-reference#ocr-pdf"><span class="method post">POST</span> OCR PDF</a>
         <a href="api-reference#ocr-async"><span class="method post">POST</span> OCR Request</a>
@@ -115,14 +138,14 @@
       <main class="docs-content api-docs-content">
         <article class="docs-article">
           <p class="docs-eyebrow">API Reference</p>
-          <h1>army-ocr API Reference</h1>
+          <h1>Army-OCR API Reference</h1>
           <p class="docs-lead">
-            이 문서는 army-ocr을 외부 시스템에서 호출하기 위한 범용 OCR API 계약을 정리합니다.
+            이 문서는 Army-OCR을 외부 시스템에서 호출하기 위한 범용 OCR API 계약을 정리합니다.
             고객 연동은 <code>/api/v1/*</code>가 기준이며, 체험 UI 경로는 데모와 QA 용도입니다.
           </p>
           <div class="docs-callout">
             <strong>구현 기준</strong>
-            <span>이 페이지는 현재 서비스의 <code>/openapi.json</code>에 등록된 endpoint만 설명합니다. Datalab에 있지만 이 OCR 서비스에 없는 endpoint는 Reference에 넣지 않습니다.</span>
+            <span>이 페이지는 현재 서비스의 <code>/openapi.json</code>에 등록된 endpoint만 설명합니다. 외부 계약에 없는 내부 전용 endpoint는 Reference에 넣지 않습니다.</span>
           </div>
 
           <h2 id="base">기본 정보</h2>
@@ -143,18 +166,18 @@
             <p class="docs-eyebrow">Health</p>
             <h2>서비스 상태 확인</h2>
             <div class="endpoint-bar"><span class="method get">GET</span><code>/health</code></div>
-            <p>OCR 서비스가 살아 있는지 확인합니다. Datalab 호환 health는 <code>/api/health</code>, <code>/api/v1/health</code>도 제공합니다.</p>
+            <p>OCR 서비스가 살아 있는지 확인합니다. 호환 health는 <code>/api/health</code>, <code>/api/v1/health</code>도 제공합니다.</p>
             <h3>Response</h3>
             <pre><code>{
   "status": "ok",
-  "service": "army-ocr Service",
+  "service": "Army-OCR Service",
   "compat_mode": "datalab-like-v1"
 }</code></pre>
             <table>
               <thead><tr><th>Method</th><th>Path</th><th>용도</th></tr></thead>
               <tbody>
                 <tr><td><code>GET</code></td><td><code>/health</code></td><td>외부 gateway/호환 health</td></tr>
-                <tr><td><code>GET</code></td><td><code>/api/health</code></td><td>Datalab 스타일 alias</td></tr>
+                <tr><td><code>GET</code></td><td><code>/api/health</code></td><td>호환 alias</td></tr>
                 <tr><td><code>GET</code></td><td><code>/api/v1/health</code></td><td>API prefix 내부 health</td></tr>
               </tbody>
             </table>
@@ -182,8 +205,15 @@
             <h2>계정 신청/승인</h2>
             <div class="endpoint-bar"><span class="method post">POST</span><code>/playground/api/auth/signup</code></div>
             <div class="endpoint-bar"><span class="method post">POST</span><code>/playground/api/auth/login</code></div>
+            <div class="endpoint-bar"><span class="method get">GET</span><code>/playground/api/auth/me</code></div>
+            <div class="endpoint-bar"><span class="method post">POST</span><code>/playground/api/auth/logout</code></div>
+            <div class="endpoint-bar"><span class="method get">GET</span><code>/playground/api/admin/overview</code></div>
             <div class="endpoint-bar"><span class="method get">GET</span><code>/playground/api/admin/users</code></div>
-            <p>일반 사용자는 계정 신청만 할 수 있고, 관리자 승인 후 로그인할 수 있습니다. 운영 설정과 계정 승인은 관리자 세션이 필요합니다.</p>
+            <div class="endpoint-bar"><span class="method post">POST</span><code>/playground/api/admin/users/{user_id}/approve</code></div>
+            <div class="endpoint-bar"><span class="method post">POST</span><code>/playground/api/admin/users/{user_id}/reject</code></div>
+            <div class="endpoint-bar"><span class="method post">POST</span><code>/playground/api/admin/users/{user_id}/suspend</code></div>
+            <div class="endpoint-bar"><span class="method post">POST</span><code>/playground/api/admin/users/{user_id}/activate</code></div>
+            <p>일반 사용자는 계정 신청만 할 수 있고, 관리자 승인 후 로그인할 수 있습니다. 운영 설정과 계정 승인/정지/재활성화는 관리자 세션이 필요합니다. 정지와 반려는 해당 사용자의 기존 세션도 끊습니다.</p>
           </section>
 
           <section class="endpoint" id="runtime-settings">
@@ -191,7 +221,7 @@
             <h2>운영 설정 조회/저장</h2>
             <div class="endpoint-bar"><span class="method get">GET</span><code>/playground/api/admin/runtime-settings</code></div>
             <div class="endpoint-bar"><span class="method put">PUT</span><code>/playground/api/admin/runtime-settings</code></div>
-            <p>관리자 세션이 필요합니다. 이미지를 다시 만들지 않고 OCR upstream, timeout, 동시성, Chandra prompt/batch, playground 제한, 국회 API/LLM/감시 주기 같은 운영값을 저장합니다. <code>restart_required</code>인 vLLM 실행 인자는 저장 후 vLLM만 재시작하면 반영됩니다.</p>
+            <p>관리자 세션이 필요합니다. 이미지를 다시 만들지 않고 OCR upstream, timeout, 동시성, OCR prompt/batch, playground 제한, 국회 API/LLM/감시 주기 같은 운영값을 저장합니다. <code>restart_required</code>인 vLLM 실행 인자는 저장 후 vLLM만 재시작하면 반영됩니다.</p>
             <pre><code>curl -c cookies.txt -X POST http://127.0.0.1:18110/playground/api/auth/login \
   -H "content-type: application/json" \
   -d "{\"username\":\"admin\",\"password\":\"&lt;admin-password&gt;\"}"
@@ -234,7 +264,7 @@ curl -b cookies.txt -X PUT http://127.0.0.1:18110/playground/api/admin/runtime-s
             <p class="docs-eyebrow">Synchronous OCR</p>
             <h2>PDF OCR</h2>
             <div class="endpoint-bar"><span class="method post">POST</span><code>/api/v1/ocr/pdf</code></div>
-            <p>PDF를 페이지 이미지로 렌더링한 뒤 Chandra OCR을 실행합니다.</p>
+            <p>PDF를 페이지 이미지로 렌더링한 뒤 Army-OCR 엔진을 실행합니다.</p>
             <table>
               <thead><tr><th>Form field</th><th>기본값</th><th>설명</th></tr></thead>
               <tbody>
@@ -405,7 +435,7 @@ curl http://127.0.0.1:18110/api/v1/convert_document/{request_id}</code></pre>
           <section class="endpoint" id="extraction">
             <p class="docs-eyebrow">Extraction</p>
             <h2>구조화 추출/평가 API</h2>
-            <p>Chandra OCR 결과를 기반으로 schema를 만들고, OCR 텍스트에서 필드 값을 rule-first 방식으로 추출합니다.</p>
+            <p>OCR 결과를 기반으로 schema를 만들고, OCR 텍스트에서 필드 값을 rule-first 방식으로 추출합니다.</p>
             <table>
               <thead><tr><th>Method</th><th>Path</th><th>설명</th></tr></thead>
               <tbody>

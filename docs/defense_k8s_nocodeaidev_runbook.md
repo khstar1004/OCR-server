@@ -43,6 +43,7 @@ GET  https://nocodeaidev.army.mil:20443/a-cong-ocr-playground/
 
 - 기본 아이디는 ConfigMap의 `PLAYGROUND_ADMIN_USERNAME`입니다.
 - 기본 비밀번호는 Secret의 `PLAYGROUND_ADMIN_PASSWORD`입니다.
+- 현재 배포 YAML의 초기값은 `admin / roqkfrhk1!`입니다.
 - 최초 반입 후 Secret 값을 현장 비밀번호로 바꾸고 playground/app/OCR API Pod를 재시작합니다.
 
 관리자 로그인 후 runtime settings API:
@@ -62,7 +63,7 @@ curl -k -b cookies.txt -X PUT \
   -d '{
     "values": {
       "ocr_service_timeout_sec": 300,
-      "playground_default_max_pages": 20,
+      "playground_default_max_pages": 0,
       "playground_max_upload_mb": 1024,
       "target_api_base_url": "http://<target-server>:8000/news",
       "target_api_timeout_sec": 60
@@ -91,7 +92,7 @@ kubectl -n nocodeaidev exec deploy/a-cong-ocr-playground -- \
 | `pdf_render_dpi` | PDF 페이지 이미지 렌더링 DPI |
 | `chandra_prompt_type` | Chandra OCR prompt type |
 | `chandra_batch_size` | HF/local runner batch size |
-| `playground_default_max_pages` | playground 기본 최대 쪽수 |
+| `playground_default_max_pages` | playground에서 페이지 범위를 비웠을 때 적용할 최대 쪽수. 0이면 파일 전체 |
 | `playground_max_upload_mb` | playground 업로드 제한 |
 | `playground_upstream_base_url` | 분리 playground proxy가 호출할 OCR API 주소 |
 | `llm_base_url` | 국회 기사 후처리 LLM base URL, 비우면 휴리스틱 |

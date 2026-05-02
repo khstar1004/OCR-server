@@ -3,14 +3,35 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>army-ocr API Guide</title>
+  <title>Army-OCR API Guide</title>
   <base href="__PLAYGROUND_BASE__">
   <link rel="stylesheet" href="assets/playground.css">
 </head>
 <body class="docs-body">
   <div class="docs-shell">
     <aside class="docs-sidebar">
-      <div class="docs-brand"><span class="brand-mark">a</span><span>army-ocr</span></div>
+      <div class="docs-brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="24" height="24" focusable="false" aria-hidden="true">
+            <defs>
+              <linearGradient id="ocrGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#7C3AED" />
+                <stop offset="100%" stop-color="#2DD4BF" />
+              </linearGradient>
+            </defs>
+            <circle cx="60" cy="60" r="18" fill="none" stroke="url(#ocrGradient)" stroke-width="5" />
+            <circle cx="60" cy="60" r="6" fill="url(#ocrGradient)" />
+            <g stroke="url(#ocrGradient)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none">
+              <path d="M 35 35 L 25 35 L 25 45" />
+              <path d="M 85 35 L 95 35 L 95 45" />
+              <path d="M 25 75 L 25 85 L 35 85" />
+              <path d="M 95 75 L 95 85 L 85 85" />
+            </g>
+            <line x1="15" y1="60" x2="105" y2="60" stroke="#2DD4BF" stroke-width="2" opacity="0.6" stroke-dasharray="4 4" />
+          </svg>
+        </span>
+        <span>Army-OCR</span>
+      </div>
       <div class="docs-search">Search API guide...</div>
       <nav class="docs-side-nav" aria-label="API guide">
         <p>API Guide</p>
@@ -53,9 +74,9 @@
       <main class="docs-content api-docs-content">
         <article class="docs-article">
           <p class="docs-eyebrow" id="overview">Integration Guide</p>
-          <h1>army-ocr API Guide</h1>
+          <h1>Army-OCR API Guide</h1>
           <p class="docs-lead">
-            이 문서는 외부 서비스가 army-ocr을 호출해 PDF/이미지를 구조화 문서로 바꾸는 방법을 설명합니다.
+            이 문서는 외부 서비스가 Army-OCR을 호출해 PDF/이미지를 구조화 문서로 바꾸는 방법을 설명합니다.
             구현된 OCR 서비스 API만 다루며, 브라우저 체험 UI 전용 endpoint는 마지막 보조 항목으로만 분리합니다.
           </p>
 
@@ -88,7 +109,6 @@ curl "$BASE_URL/api/v1/capabilities"
 curl -X POST "$BASE_URL/api/v1/marker" \
   -F "file=@sample.pdf" \
   -F "output_format=json,markdown,html,chunks" \
-  -F "page_range=0" \
   -F "mode=balanced"
 
 curl "$BASE_URL/api/v1/marker/{request_id}"</code></pre>
@@ -105,7 +125,6 @@ with open("sample.pdf", "rb") as file:
         files={"file": file},
         data={
             "output_format": "json,markdown,html,chunks",
-            "page_range": "0",
             "mode": "balanced",
         },
     ).json()
@@ -302,13 +321,14 @@ images/page-0001-image-0001.png</code></pre>
 
           <h2 id="runtime-settings">Runtime Settings</h2>
           <p>자주 바꾸는 timeout, playground 제한, 국회 API 연동 주소는 이미지 재빌드 없이 런타임 설정 파일에 저장할 수 있습니다. 배포 기본 경로는 <code>/data/runtime/runtime-config/settings.json</code>입니다. 설정 변경은 <code>/playground/admin</code> 관리자 페이지 또는 관리자 세션을 가진 API 요청에서만 허용됩니다.</p>
+          <p>관리자는 <code>/playground/api/admin/overview</code>로 계정/세션/설정/서비스 상태를 한 번에 확인하고, <code>approve</code>, <code>reject</code>, <code>suspend</code>, <code>activate</code> endpoint로 사용자 상태를 운영합니다. 정지와 반려는 기존 세션을 즉시 제거합니다.</p>
           <pre><code>curl -c cookies.txt -X POST "$BASE_URL/playground/api/auth/login" \
   -H "content-type: application/json" \
   -d "{\"username\":\"admin\",\"password\":\"&lt;admin-password&gt;\"}"
 
 curl -b cookies.txt -X PUT "$BASE_URL/playground/api/admin/runtime-settings" \
   -H "content-type: application/json" \
-  -d "{\"values\":{\"ocr_service_timeout_sec\":300,\"playground_default_max_pages\":20,\"target_api_timeout_sec\":60}}"</code></pre>
+  -d "{\"values\":{\"ocr_service_timeout_sec\":300,\"playground_default_max_pages\":0,\"target_api_timeout_sec\":60}}"</code></pre>
           <table>
             <thead><tr><th>Key</th><th>적용</th><th>설명</th></tr></thead>
             <tbody>
@@ -317,9 +337,9 @@ curl -b cookies.txt -X PUT "$BASE_URL/playground/api/admin/runtime-settings" \
               <tr><td><code>ocr_service_timeout_sec</code></td><td>새 요청</td><td>OCR API/worker 응답 대기 시간</td></tr>
               <tr><td><code>ocr_max_concurrent_requests</code></td><td>새 요청</td><td>OCR 모델 진입 동시성 gate</td></tr>
               <tr><td><code>pdf_render_dpi</code></td><td>새 요청</td><td>PDF 페이지 이미지 렌더링 DPI</td></tr>
-              <tr><td><code>chandra_prompt_type</code></td><td>새 요청</td><td>Chandra OCR prompt type</td></tr>
-              <tr><td><code>chandra_batch_size</code></td><td>새 요청</td><td>HF/local runner batch size</td></tr>
-              <tr><td><code>playground_default_max_pages</code></td><td>즉시</td><td>체험 UI 기본 최대 쪽수</td></tr>
+              <tr><td><code>chandra_prompt_type</code></td><td>새 요청</td><td>OCR prompt type</td></tr>
+              <tr><td><code>chandra_batch_size</code></td><td>새 요청</td><td>로컬 runner batch size</td></tr>
+              <tr><td><code>playground_default_max_pages</code></td><td>즉시</td><td>페이지 범위를 비웠을 때 적용할 최대 쪽수. 0이면 파일 전체</td></tr>
               <tr><td><code>playground_max_upload_mb</code></td><td>즉시</td><td>체험 UI 업로드 제한</td></tr>
               <tr><td><code>playground_upstream_base_url</code></td><td>새 요청</td><td>분리 playground proxy가 호출할 OCR API 주소</td></tr>
               <tr><td><code>llm_base_url</code></td><td>새 요청</td><td>국회 기사 후처리 LLM base URL</td></tr>

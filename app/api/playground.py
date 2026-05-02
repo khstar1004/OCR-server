@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import base64
+import binascii
+import copy
+import io
 import json
 import threading
 from pathlib import Path
@@ -8,15 +12,19 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
+from PIL import Image, UnidentifiedImageError
 
 from app.core.config import get_settings
-from app.services.datalab_compat import DatalabCompatService, normalize_marker_mode, parse_page_range
+from app.domain.types import SUPPORTED_BLOCK_LABELS, normalize_block_label_value
+from app.services.datalab_compat import DatalabCompatService, normalize_marker_mode, parse_page_range, utcnow_iso
 from app.services.playground_export import (
     build_playground_export_zip,
     build_playground_partial_response_payload,
     build_playground_response_payload,
+    collect_playground_assets,
     find_playground_asset,
     read_asset_bytes,
+    render_playground_views,
 )
 from app.services.runtime_config import get_runtime_config_store, runtime_config_value
 from app.services.auth_store import AUTH_COOKIE_NAME, current_user_from_request, get_auth_store, require_admin_user
@@ -33,6 +41,13 @@ _PLAYGROUND_ADMIN_TEMPLATE = _REPO_ROOT / "templates" / "playground" / "admin.ht
 _PLAYGROUND_STATIC_ROOT = (_REPO_ROOT / "static" / "playground").resolve()
 _PLAYGROUND_GUIDE_MARKDOWN = _REPO_ROOT / "docs" / "ocr_playground_api_guide.md"
 DEFAULT_MAX_PLAYGROUND_UPLOAD_BYTES = 512 * 1024 * 1024
+MAX_PLAYGROUND_MANUAL_IMAGE_BYTES = 12 * 1024 * 1024
+PLAYGROUND_EDIT_METADATA_KEY = "playground_edit"
+PLAYGROUND_DEFAULT_PAGE_RANGE = ""
+PLAYGROUND_MODE_DPI_CAPS = {
+    "fast": 180,
+    "balanced": 240,
+}
 
 
 @router.get("", response_class=HTMLResponse, include_in_schema=False)
@@ -48,6 +63,10 @@ def get_playground(request: Request) -> HTMLResponse:
     html = html.replace("__API_CAPABILITIES_URL__", links["api_capabilities"]["url"])
     html = html.replace("__OCR_HEALTH_URL__", links["ocr_health"]["url"])
     html = html.replace("__ADMIN_URL__", links["admin"]["url"])
+    html = html.replace(
+        'href="admin" target="_blank" rel="noopener" data-resource-link="admin"',
+        f'href="{links["admin"]["url"]}" target="_blank" rel="noopener" data-resource-link="admin"',
+    )
     return HTMLResponse(html)
 
 
@@ -125,9 +144,9 @@ def get_playground_health(request: Request) -> dict[str, Any]:
     settings = get_settings()
     return {
         "status": "ok" if isinstance(compat, DatalabCompatService) else "starting",
-        "service": "army-ocr-playground",
+        "service": "Army-OCR-playground",
         "ocr_service_ready": isinstance(compat, DatalabCompatService),
-        "ocr_backend": settings.ocr_backend,
+        "ocr_backend": "army_ocr",
         "max_concurrent_ocr_requests": max(
             int(runtime_config_value("ocr_max_concurrent_requests", settings.ocr_max_concurrent_requests, settings) or 1),
             1,
@@ -143,9 +162,9 @@ def get_playground_capabilities(request: Request) -> dict[str, Any]:
         versions = compat.versions()
     settings = get_settings()
     return {
-        "service": "army-ocr",
+        "service": "Army-OCR",
         "playground": True,
-        "ocr_backend": settings.ocr_backend,
+        "ocr_backend": "army_ocr",
         "versions": versions,
         "input_formats": ["pdf", "png", "jpg", "jpeg", "webp"],
         "output_formats": ["json", "markdown", "html", "chunks", "zip"],
@@ -156,6 +175,8 @@ def get_playground_capabilities(request: Request) -> dict[str, Any]:
             "file_url": True,
             "blocks": True,
             "bounding_boxes": True,
+            "tables": True,
+            "layout_block_labels": list(SUPPORTED_BLOCK_LABELS),
             "markdown_with_images": True,
             "html_with_images": True,
             "zip_export_with_images": True,
@@ -164,7 +185,7 @@ def get_playground_capabilities(request: Request) -> dict[str, Any]:
                 int(runtime_config_value("ocr_max_concurrent_requests", settings.ocr_max_concurrent_requests, settings) or 1),
                 1,
             ),
-            "default_max_pages": int(runtime_config_value("playground_default_max_pages", 10, settings)),
+            "default_max_pages": _playground_default_max_pages_cap(),
             "max_upload_mb": int(runtime_config_value("playground_max_upload_mb", 512, settings)),
         },
         "links": _resource_links(request),
@@ -246,6 +267,23 @@ def list_admin_users(request: Request) -> dict[str, Any]:
     return {"success": True, "users": store.list_users(), "summary": store.snapshot()}
 
 
+@router.get("/api/admin/overview")
+def get_admin_overview(request: Request) -> dict[str, Any]:
+    admin = require_admin_user(request)
+    settings = get_settings()
+    store = get_auth_store(settings)
+    runtime_payload = get_runtime_config_store(settings).snapshot()
+    return {
+        "success": True,
+        "user": admin,
+        "auth": store.snapshot(),
+        "runtime": _runtime_overview(runtime_payload),
+        "settings": runtime_payload,
+        "health": get_playground_health(request),
+        "capabilities": get_playground_capabilities(request),
+    }
+
+
 @router.post("/api/admin/users/{user_id}/approve")
 def approve_admin_user(request: Request, user_id: str) -> dict[str, Any]:
     admin = require_admin_user(request)
@@ -261,6 +299,30 @@ def reject_admin_user(request: Request, user_id: str) -> dict[str, Any]:
     admin = require_admin_user(request)
     try:
         user = get_auth_store(get_settings()).reject_user(user_id, rejected_by=str(admin.get("username") or "admin"))
+    except KeyError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found") from None
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+    return {"success": True, "user": user}
+
+
+@router.post("/api/admin/users/{user_id}/suspend")
+def suspend_admin_user(request: Request, user_id: str) -> dict[str, Any]:
+    admin = require_admin_user(request)
+    try:
+        user = get_auth_store(get_settings()).suspend_user(user_id, suspended_by=str(admin.get("username") or "admin"))
+    except KeyError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found") from None
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+    return {"success": True, "user": user}
+
+
+@router.post("/api/admin/users/{user_id}/activate")
+def activate_admin_user(request: Request, user_id: str) -> dict[str, Any]:
+    admin = require_admin_user(request)
+    try:
+        user = get_auth_store(get_settings()).activate_user(user_id, activated_by=str(admin.get("username") or "admin"))
     except KeyError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found") from None
     return {"success": True, "user": user}
@@ -330,8 +392,8 @@ async def start_playground_document_conversion(
     file: UploadFile | None = File(default=None),
     file_0: UploadFile | None = File(default=None, alias="file.0"),
     file_url: str | None = Form(default=None),
-    page_range: str | None = Form(default="0-9"),
-    max_pages: int | None = Form(default=10),
+    page_range: str | None = Form(default=PLAYGROUND_DEFAULT_PAGE_RANGE),
+    max_pages: int | None = Form(default=None),
     mode: str = Form(default="balanced"),
     paginate: bool = Form(default=False),
     add_block_ids: bool = Form(default=True),
@@ -385,8 +447,8 @@ async def convert_playground_document(
     file: UploadFile | None = File(default=None),
     file_0: UploadFile | None = File(default=None, alias="file.0"),
     file_url: str | None = Form(default=None),
-    page_range: str | None = Form(default="0-9"),
-    max_pages: int | None = Form(default=10),
+    page_range: str | None = Form(default=PLAYGROUND_DEFAULT_PAGE_RANGE),
+    max_pages: int | None = Form(default=None),
     mode: str = Form(default="balanced"),
     paginate: bool = Form(default=False),
     add_block_ids: bool = Form(default=True),
@@ -441,6 +503,35 @@ def get_playground_conversion_result(request: Request, request_id: str) -> dict[
     return _playground_result_payload(compat, request_id)
 
 
+@router.put("/api/convert/{request_id}/blocks/{page_index}/{block_index}")
+async def update_playground_result_block(
+    request: Request,
+    request_id: str,
+    page_index: int,
+    block_index: int,
+) -> dict[str, Any]:
+    payload = await _read_json_object(request)
+    compat = _get_compat(request)
+    record, result = _get_record_and_result(compat, request_id)
+    updated_result, record_changes = _apply_playground_block_edit(
+        compat=compat,
+        request_id=request_id,
+        record=record,
+        result=result,
+        page_index=page_index,
+        block_index=block_index,
+        payload=payload,
+    )
+    compat._update_request_record(
+        request_id,
+        status=str(updated_result.get("status") or record.get("status") or "complete"),
+        result=updated_result,
+        error=updated_result.get("error"),
+        **record_changes,
+    )
+    return _playground_result_payload(compat, request_id)
+
+
 @router.get("/api/images/{request_id}/{asset_name}")
 def get_playground_image(request: Request, request_id: str, asset_name: str) -> Response:
     compat = _get_compat(request)
@@ -463,8 +554,321 @@ def download_playground_result(request: Request, request_id: str) -> Response:
     return Response(
         content=content,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="army-ocr-result-{request_id}.zip"'},
+        headers={"Content-Disposition": f'attachment; filename="Army-OCR-result-{request_id}.zip"'},
     )
+
+
+def _apply_playground_block_edit(
+    *,
+    compat: DatalabCompatService,
+    request_id: str,
+    record: dict[str, Any],
+    result: dict[str, Any],
+    page_index: int,
+    block_index: int,
+    payload: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    if page_index < 0 or block_index < 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="page_index and block_index must be non-negative")
+
+    updated = copy.deepcopy(result)
+    json_payload = updated.get("json") if isinstance(updated.get("json"), dict) else None
+    if json_payload is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="editable OCR JSON is not available")
+    pages = json_payload.get("pages")
+    if not isinstance(pages, list) or page_index >= len(pages) or not isinstance(pages[page_index], dict):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="page not found")
+    page = pages[page_index]
+    blocks = page.get("blocks")
+    if not isinstance(blocks, list) or block_index >= len(blocks) or not isinstance(blocks[block_index], dict):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="block not found")
+
+    block = blocks[block_index]
+    updated_at = utcnow_iso()
+    original_label = str(block.get("label") or "text")
+    label = _normalize_playground_edit_label(payload.get("label", original_label))
+    text = _normalize_playground_edit_text(payload.get("text", block.get("text") or ""))
+    table_rows = _normalize_playground_table_rows(payload.get("table_rows")) if "table_rows" in payload else None
+
+    metadata = copy.deepcopy(block.get("metadata")) if isinstance(block.get("metadata"), dict) else {}
+    edit_metadata = copy.deepcopy(metadata.get(PLAYGROUND_EDIT_METADATA_KEY)) if isinstance(metadata.get(PLAYGROUND_EDIT_METADATA_KEY), dict) else {}
+    edit_metadata.setdefault("original_label", original_label)
+    edit_metadata["edited"] = True
+    edit_metadata["updated_at"] = updated_at
+
+    block["label"] = label
+    block["text"] = text
+    if label == "table":
+        if table_rows is not None:
+            metadata["table_rows"] = table_rows
+            if not text.strip():
+                block["text"] = _table_rows_to_tsv(table_rows)
+    else:
+        metadata.pop("table_rows", None)
+
+    manual_image_paths = dict(record.get("manual_image_paths") or {}) if isinstance(record.get("manual_image_paths"), dict) else {}
+    if payload.get("remove_manual_image") is True:
+        previous_image = edit_metadata.get("manual_image")
+        if isinstance(previous_image, dict):
+            previous_name = Path(str(previous_image.get("name") or "")).name
+            if previous_name:
+                manual_image_paths.pop(previous_name, None)
+        edit_metadata.pop("manual_image", None)
+
+    image_payload = payload.get("image")
+    if image_payload is not None:
+        if not isinstance(image_payload, dict):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="image must be an object")
+        if image_payload.get("data_url") or image_payload.get("data"):
+            image_info = _save_playground_manual_image(
+                compat=compat,
+                request_id=request_id,
+                page_index=page_index,
+                block_index=block_index,
+                image_payload=image_payload,
+                updated_at=updated_at,
+            )
+            source_path = str(image_info.pop("source_path"))
+            manual_image_paths[image_info["name"]] = source_path
+            edit_metadata["manual_image"] = image_info
+
+    metadata[PLAYGROUND_EDIT_METADATA_KEY] = edit_metadata
+    block["metadata"] = metadata
+    page["text"] = _page_text_from_blocks(blocks)
+
+    updated["json"] = json_payload
+    metadata_payload = copy.deepcopy(updated.get("metadata")) if isinstance(updated.get("metadata"), dict) else {}
+    playground_edits = copy.deepcopy(metadata_payload.get("playground_edits")) if isinstance(metadata_payload.get("playground_edits"), dict) else {}
+    playground_edits.update(
+        {
+            "updated_at": updated_at,
+            "last_page_index": page_index,
+            "last_block_index": block_index,
+        }
+    )
+    metadata_payload["playground_edits"] = playground_edits
+    updated["metadata"] = metadata_payload
+
+    record_changes = {"manual_image_paths": manual_image_paths}
+    _refresh_playground_result_outputs(record={**record, **record_changes}, result=updated)
+    return updated, record_changes
+
+
+def _normalize_playground_edit_label(value: Any) -> str:
+    label = normalize_block_label_value(value)
+    if label not in SUPPORTED_BLOCK_LABELS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported block label")
+    return label
+
+
+def _normalize_playground_edit_text(value: Any) -> str:
+    text = "" if value is None else str(value)
+    if len(text) > 1_000_000:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="block text is too large")
+    return text
+
+
+def _normalize_playground_table_rows(value: Any) -> list[list[str]]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="table_rows must be a list")
+    rows: list[list[str]] = []
+    for row in value[:500]:
+        if not isinstance(row, list):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="table row must be a list")
+        cells = [str(cell or "").strip() for cell in row[:80]]
+        if any(cells):
+            rows.append(cells)
+    return rows
+
+
+def _save_playground_manual_image(
+    *,
+    compat: DatalabCompatService,
+    request_id: str,
+    page_index: int,
+    block_index: int,
+    image_payload: dict[str, Any],
+    updated_at: str,
+) -> dict[str, Any]:
+    raw_data = str(image_payload.get("data_url") or image_payload.get("data") or "")
+    if "," in raw_data and raw_data.lower().startswith("data:"):
+        header, encoded = raw_data.split(",", 1)
+        if not header.lower().startswith("data:image/"):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="image data URL is required")
+    else:
+        encoded = raw_data
+    try:
+        content = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid image data") from None
+    if not content or len(content) > MAX_PLAYGROUND_MANUAL_IMAGE_BYTES:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="manual image is too large")
+
+    try:
+        with Image.open(io.BytesIO(content)) as image:
+            image.load()
+            width, height = image.size
+            normalized = image.convert("RGBA" if image.mode in {"RGBA", "LA", "P"} else "RGB")
+            buffer = io.BytesIO()
+            normalized.save(buffer, format="PNG")
+    except (UnidentifiedImageError, OSError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid image file") from None
+
+    image_bytes = buffer.getvalue()
+    if len(image_bytes) > MAX_PLAYGROUND_MANUAL_IMAGE_BYTES:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="manual image is too large")
+    manual_dir = _playground_manual_image_dir(compat, request_id)
+    manual_dir.mkdir(parents=True, exist_ok=True)
+    image_name = f"manual-page-{page_index + 1:04d}-block-{block_index + 1:04d}.png"
+    image_path = manual_dir / image_name
+    image_path.write_bytes(image_bytes)
+    return {
+        "name": image_name,
+        "media_type": "image/png",
+        "width": width,
+        "height": height,
+        "size_bytes": len(image_bytes),
+        "updated_at": updated_at,
+        "source_path": str(image_path),
+    }
+
+
+def _playground_manual_image_dir(compat: DatalabCompatService, request_id: str) -> Path:
+    request_root = (compat.requests_dir / Path(request_id).name).resolve()
+    try:
+        request_root.relative_to(compat.requests_dir.resolve())
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid request id") from None
+    return request_root / "manual_images"
+
+
+def _refresh_playground_result_outputs(*, record: dict[str, Any], result: dict[str, Any]) -> None:
+    json_payload = result.get("json") if isinstance(result.get("json"), dict) else {}
+    pages = json_payload.get("pages") if isinstance(json_payload.get("pages"), list) else []
+    source_file = str(result.get("metadata", {}).get("source_file") or json_payload.get("file_name") or "")
+    assets = collect_playground_assets(record, result)
+    views = render_playground_views(result, assets, image_ref_prefix="images", relative_images=True)
+    chunks = _chunks_from_pages(pages, source_file)
+
+    result["markdown"] = views["markdown"]
+    result["html"] = views["html"]
+    result["chunks"] = chunks
+    formats = _playground_result_output_formats(result)
+    result["result"] = _playground_result_payload_for_formats(
+        formats=formats,
+        json_payload=json_payload,
+        markdown=views["markdown"],
+        html=views["html"],
+        chunks=chunks,
+    )
+
+
+def _playground_result_output_formats(result: dict[str, Any]) -> list[str]:
+    raw_formats = result.get("output_formats")
+    if isinstance(raw_formats, list):
+        formats = [str(item).strip().lower() for item in raw_formats]
+    else:
+        formats = [item.strip().lower() for item in str(result.get("output_format") or "").split(",")]
+    formats = [item for item in formats if item in {"json", "markdown", "html", "chunks"}]
+    return formats or ["json", "markdown", "html", "chunks"]
+
+
+def _playground_result_payload_for_formats(
+    *,
+    formats: list[str],
+    json_payload: dict[str, Any],
+    markdown: str,
+    html: str,
+    chunks: list[dict[str, Any]],
+) -> Any:
+    outputs = {
+        "json": json_payload,
+        "markdown": markdown,
+        "html": html,
+        "chunks": chunks,
+    }
+    if len(formats) == 1:
+        return outputs[formats[0]]
+    return {name: outputs[name] for name in formats}
+
+
+def _chunks_from_pages(pages: list[Any], source_file: str) -> list[dict[str, Any]]:
+    chunks: list[dict[str, Any]] = []
+    for page in pages:
+        if not isinstance(page, dict):
+            continue
+        page_number = page.get("page_number")
+        for block in page.get("blocks") or []:
+            if not isinstance(block, dict):
+                continue
+            chunk = copy.deepcopy(block)
+            chunk["page_number"] = page_number
+            if source_file:
+                chunk["file_name"] = source_file
+            chunk["markdown"] = _block_markdown_for_chunk(block)
+            chunks.append(chunk)
+    return chunks
+
+
+def _block_markdown_for_chunk(block: dict[str, Any]) -> str:
+    text = str(block.get("text") or "").strip()
+    label = str(block.get("label") or "").strip().lower()
+    if not text:
+        return ""
+    if label in {"title", "sectionheader", "section_header", "heading"}:
+        return f"## {text}"
+    if label == "table":
+        rows = block.get("metadata", {}).get("table_rows") if isinstance(block.get("metadata"), dict) else None
+        if isinstance(rows, list) and rows:
+            return _markdown_table_from_rows(rows)
+        return f"**Table**\n\n{text}"
+    if label == "code_block":
+        return f"```text\n{text}\n```"
+    if label in {"equation_block", "chemical_block"}:
+        return f"$$\n{text}\n$$"
+    if label in {"form", "table_of_contents", "bibliography", "complex_block", "blank_page"}:
+        return f"**{label.replace('_', ' ').title()}**\n\n{text}"
+    if label in {"caption", "footnote", "pageheader", "pagefooter", "header", "footer"}:
+        return f"*{text}*"
+    return text
+
+
+def _markdown_table_from_rows(rows: list[Any]) -> str:
+    normalized = [
+        [str(cell or "").replace("|", "\\|").strip() for cell in row]
+        for row in rows
+        if isinstance(row, list) and any(str(cell or "").strip() for cell in row)
+    ]
+    if not normalized:
+        return ""
+    column_count = max(len(row) for row in normalized)
+    for row in normalized:
+        while len(row) < column_count:
+            row.append("")
+    header = normalized[0]
+    body = normalized[1:]
+    return "\n".join(
+        [
+            f"| {' | '.join(header)} |",
+            f"| {' | '.join(['---'] * column_count)} |",
+            *[f"| {' | '.join(row)} |" for row in body],
+        ]
+    )
+
+
+def _table_rows_to_tsv(rows: list[list[str]]) -> str:
+    return "\n".join("\t".join(cell for cell in row) for row in rows)
+
+
+def _page_text_from_blocks(blocks: list[Any]) -> str:
+    chunks = [
+        str(block.get("text") or "").strip()
+        for block in blocks
+        if isinstance(block, dict) and str(block.get("text") or "").strip()
+    ]
+    return "\n".join(chunks)
 
 
 def _get_compat(request: Request) -> DatalabCompatService:
@@ -511,11 +915,7 @@ async def _create_playground_marker_request(
     compat = _get_compat(request)
     normalized_mode = _normalize_mode(mode)
     normalized_page_range = _normalize_page_range(page_range)
-    normalized_max_pages = _normalize_max_pages(
-        max_pages
-        if max_pages is not None
-        else int(runtime_config_value("playground_default_max_pages", 10, get_settings()))
-    )
+    normalized_max_pages = _normalize_playground_max_pages(max_pages, normalized_page_range)
     payload, filename, input_source = await _read_playground_input(
         compat,
         file=file,
@@ -549,6 +949,7 @@ async def _create_playground_marker_request(
     process_kwargs = {
         "file_bytes": payload,
         "file_name": filename,
+        "dpi": _playground_pdf_dpi(normalized_mode),
         "max_pages": normalized_max_pages,
         "page_range": normalized_page_range,
         "output_format": "json,markdown,html,chunks",
@@ -669,6 +1070,36 @@ def _normalize_max_pages(max_pages: int | None) -> int | None:
     return max_pages
 
 
+def _normalize_playground_max_pages(max_pages: int | None, page_range: str | None) -> int | None:
+    if max_pages is not None:
+        return _normalize_max_pages(max_pages)
+    if page_range:
+        return None
+    return _playground_default_max_pages_cap()
+
+
+def _playground_default_max_pages_cap() -> int | None:
+    settings = get_settings()
+    try:
+        value = int(runtime_config_value("playground_default_max_pages", settings.playground_default_max_pages, settings) or 0)
+    except (TypeError, ValueError):
+        return None
+    if value <= 0:
+        return None
+    return value
+
+
+def _playground_pdf_dpi(mode: str) -> int:
+    settings = get_settings()
+    configured = int(runtime_config_value("pdf_render_dpi", settings.pdf_render_dpi, settings) or settings.pdf_render_dpi)
+    if configured <= 0:
+        configured = settings.pdf_render_dpi
+    cap = PLAYGROUND_MODE_DPI_CAPS.get(mode)
+    if cap is None:
+        return configured
+    return min(configured, cap)
+
+
 def _extras_payload(**flags: bool) -> list[str]:
     return [name for name, enabled in flags.items() if enabled]
 
@@ -678,7 +1109,7 @@ def _start_playground_worker(compat: DatalabCompatService, request_id: str, proc
         target=compat.process_marker_request,
         args=(request_id,),
         kwargs=process_kwargs,
-        name=f"army-ocr-playground-{request_id[:8]}",
+        name=f"Army-OCR-playground-{request_id[:8]}",
         daemon=True,
     )
     worker.start()
@@ -806,4 +1237,29 @@ def _resource_prefixes(request: Request) -> dict[str, str]:
         "api": f"{base}-api" if not base.endswith("-api") else base,
         "app": base,
         "playground": f"{base}-playground" if not base.endswith("-playground") else base,
+    }
+
+
+def _runtime_overview(payload: dict[str, Any]) -> dict[str, Any]:
+    specs = payload.get("specs") if isinstance(payload.get("specs"), list) else []
+    overrides = payload.get("overrides") if isinstance(payload.get("overrides"), dict) else {}
+    restart_specs = [
+        spec
+        for spec in specs
+        if isinstance(spec, dict) and spec.get("restart_required") and spec.get("has_override")
+    ]
+    groups: dict[str, int] = {}
+    for spec in specs:
+        if not isinstance(spec, dict):
+            continue
+        group = str(spec.get("group") or "other")
+        groups[group] = groups.get(group, 0) + 1
+    return {
+        "path": payload.get("path"),
+        "updated_at": payload.get("updated_at"),
+        "override_count": len(overrides),
+        "setting_count": len(specs),
+        "restart_required_override_count": len(restart_specs),
+        "restart_required_keys": [str(spec.get("key") or "") for spec in restart_specs],
+        "groups": groups,
     }

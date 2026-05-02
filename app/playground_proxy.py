@@ -27,14 +27,14 @@ _PLAYGROUND_GUIDE_MARKDOWN = _REPO_ROOT / "docs" / "ocr_playground_api_guide.md"
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(
-        title="army-ocr UI",
+        title="Army-OCR UI",
         version="0.1.0",
         root_path=settings.normalized_root_path,
     )
 
     @app.get("/health")
     def health() -> dict[str, Any]:
-        return {"status": "ok", "service": "army-ocr-playground"}
+        return {"status": "ok", "service": "Army-OCR-playground"}
 
     @app.get("/playground", response_class=HTMLResponse, include_in_schema=False)
     @app.get("/playground/", response_class=HTMLResponse, include_in_schema=False)
@@ -49,6 +49,10 @@ def create_app() -> FastAPI:
         html = html.replace("__API_CAPABILITIES_URL__", links["api_capabilities"]["url"])
         html = html.replace("__OCR_HEALTH_URL__", links["ocr_health"]["url"])
         html = html.replace("__ADMIN_URL__", links["admin"]["url"])
+        html = html.replace(
+            'href="admin" target="_blank" rel="noopener" data-resource-link="admin"',
+            f'href="{links["admin"]["url"]}" target="_blank" rel="noopener" data-resource-link="admin"',
+        )
         return HTMLResponse(html)
 
     @app.get("/playground/login", response_class=HTMLResponse, include_in_schema=False)
@@ -100,7 +104,7 @@ def create_app() -> FastAPI:
         ready = bool(upstream and upstream.get("ocr_service_ready"))
         return {
             "status": "ok" if ready else "starting",
-            "service": "army-ocr-playground",
+            "service": "Army-OCR-playground",
             "ocr_service_ready": ready,
             "upstream": upstream or {},
         }
@@ -112,12 +116,18 @@ def create_app() -> FastAPI:
             upstream["links"] = _resource_links(request)
             return upstream
         return {
-            "service": "army-ocr",
+            "service": "Army-OCR",
             "playground": True,
             "input_formats": ["pdf", "png", "jpg", "jpeg", "webp"],
             "output_formats": ["json", "markdown", "html", "chunks", "zip"],
             "marker_modes": ["fast", "balanced", "accurate"],
-            "features": {"page_range": True, "max_pages": True, "file_url": True},
+            "features": {
+                "page_range": True,
+                "max_pages": True,
+                "file_url": True,
+                "tables": True,
+                "layout_block_labels": [],
+            },
             "links": _resource_links(request),
         }
 
@@ -190,6 +200,24 @@ def create_app() -> FastAPI:
         store = get_auth_store(get_settings())
         return {"success": True, "users": store.list_users(), "summary": store.snapshot()}
 
+    @app.get("/playground/api/admin/overview")
+    async def admin_overview(request: Request) -> dict[str, Any]:
+        admin = require_admin_user(request)
+        settings = get_settings()
+        store = get_auth_store(settings)
+        local_settings = get_runtime_config_store(settings).snapshot()
+        upstream_settings = await _fetch_upstream_json(request, "/playground/api/admin/runtime-settings")
+        settings_payload = _merge_runtime_settings(upstream_settings, local_settings) if upstream_settings else local_settings
+        return {
+            "success": True,
+            "user": admin,
+            "auth": store.snapshot(),
+            "runtime": _runtime_overview(settings_payload),
+            "settings": settings_payload,
+            "health": await get_playground_health(request),
+            "capabilities": await get_playground_capabilities(request),
+        }
+
     @app.post("/playground/api/admin/users/{user_id}/approve")
     def approve_admin_user(request: Request, user_id: str) -> dict[str, Any]:
         admin = require_admin_user(request)
@@ -204,6 +232,28 @@ def create_app() -> FastAPI:
         admin = require_admin_user(request)
         try:
             user = get_auth_store(get_settings()).reject_user(user_id, rejected_by=str(admin.get("username") or "admin"))
+        except KeyError:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found") from None
+        except PermissionError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+        return {"success": True, "user": user}
+
+    @app.post("/playground/api/admin/users/{user_id}/suspend")
+    def suspend_admin_user(request: Request, user_id: str) -> dict[str, Any]:
+        admin = require_admin_user(request)
+        try:
+            user = get_auth_store(get_settings()).suspend_user(user_id, suspended_by=str(admin.get("username") or "admin"))
+        except KeyError:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found") from None
+        except PermissionError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+        return {"success": True, "user": user}
+
+    @app.post("/playground/api/admin/users/{user_id}/activate")
+    def activate_admin_user(request: Request, user_id: str) -> dict[str, Any]:
+        admin = require_admin_user(request)
+        try:
+            user = get_auth_store(get_settings()).activate_user(user_id, activated_by=str(admin.get("username") or "admin"))
         except KeyError:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found") from None
         return {"success": True, "user": user}
@@ -306,6 +356,18 @@ def create_app() -> FastAPI:
     async def proxy_convert_result(request: Request, request_id: str) -> Response:
         return await _proxy_to_upstream(request, f"/playground/api/convert/{request_id}")
 
+    @app.put("/playground/api/convert/{request_id}/blocks/{page_index}/{block_index}")
+    async def proxy_update_convert_block(
+        request: Request,
+        request_id: str,
+        page_index: int,
+        block_index: int,
+    ) -> Response:
+        return await _proxy_to_upstream(
+            request,
+            f"/playground/api/convert/{request_id}/blocks/{page_index}/{block_index}",
+        )
+
     @app.get("/playground/api/images/{request_id}/{asset_name}")
     async def proxy_image(request: Request, request_id: str, asset_name: str) -> Response:
         return await _proxy_to_upstream(request, f"/playground/api/images/{request_id}/{asset_name}")
@@ -332,9 +394,9 @@ def _render_docs_template(request: Request, html: str) -> HTMLResponse:
     return HTMLResponse(html)
 
 
-async def _fetch_upstream_json(request: Request, path: str) -> dict[str, Any]:
+async def _fetch_upstream_json(request: Request, path: str, *, timeout_sec: float | None = 5.0) -> dict[str, Any]:
     try:
-        response = await _upstream_request(request, "GET", path, content=b"")
+        response = await _upstream_request(request, "GET", path, content=b"", timeout_sec=timeout_sec)
         response.raise_for_status()
         payload = response.json()
     except Exception:
@@ -387,12 +449,44 @@ def _merge_runtime_settings(upstream: dict[str, Any], local: dict[str, Any]) -> 
     return merged
 
 
-async def _upstream_request(request: Request, method: str, path: str, *, content: bytes) -> httpx.Response:
+def _runtime_overview(payload: dict[str, Any]) -> dict[str, Any]:
+    specs = payload.get("specs") if isinstance(payload.get("specs"), list) else []
+    overrides = payload.get("overrides") if isinstance(payload.get("overrides"), dict) else {}
+    restart_specs = [
+        spec
+        for spec in specs
+        if isinstance(spec, dict) and spec.get("restart_required") and spec.get("has_override")
+    ]
+    groups: dict[str, int] = {}
+    for spec in specs:
+        if not isinstance(spec, dict):
+            continue
+        group = str(spec.get("group") or "other")
+        groups[group] = groups.get(group, 0) + 1
+    return {
+        "path": payload.get("path"),
+        "updated_at": payload.get("updated_at"),
+        "override_count": len(overrides),
+        "setting_count": len(specs),
+        "restart_required_override_count": len(restart_specs),
+        "restart_required_keys": [str(spec.get("key") or "") for spec in restart_specs],
+        "groups": groups,
+    }
+
+
+async def _upstream_request(
+    request: Request,
+    method: str,
+    path: str,
+    *,
+    content: bytes,
+    timeout_sec: float | None = None,
+) -> httpx.Response:
     url = f"{_upstream_base_url()}{path}"
     if request.url.query:
         url = f"{url}?{request.url.query}"
     headers = _upstream_headers(request)
-    timeout = httpx.Timeout(None)
+    timeout = httpx.Timeout(timeout_sec) if timeout_sec is not None else httpx.Timeout(None)
     async with httpx.AsyncClient(timeout=timeout) as client:
         return await client.request(method, url, content=content, headers=headers)
 

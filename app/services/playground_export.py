@@ -13,6 +13,7 @@ from PIL import Image
 
 IMAGE_BLOCK_LABELS = {"image", "figure", "photo", "picture", "illustration", "chart", "graphic", "diagram"}
 PAGE_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+PLAYGROUND_EDIT_METADATA_KEY = "playground_edit"
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +68,7 @@ def build_playground_response_payload(
                 "blocks": list(page.get("blocks") or []),
                 "articles": list(page.get("articles") or []),
                 "assets": [item for item in public_assets if item["page_index"] == page_index],
+                "runtime": dict(page.get("runtime") or {}) if isinstance(page.get("runtime"), dict) else None,
             }
         )
 
@@ -112,6 +114,7 @@ def build_playground_partial_response_payload(
                 "blocks": list(page.get("blocks") or []),
                 "articles": list(page.get("articles") or []),
                 "assets": [item for item in public_assets if item["page_index"] == page_index],
+                "runtime": dict(page.get("runtime") or {}) if isinstance(page.get("runtime"), dict) else None,
             }
         )
 
@@ -217,6 +220,13 @@ def collect_playground_assets(record: dict[str, Any], result: dict[str, Any]) ->
         image_order = 1
         seen_bboxes: set[tuple[int, int, int, int]] = set()
         for block in page.get("blocks") or []:
+            manual_asset = _manual_image_asset(record, page_index, page_number, block)
+            if manual_asset is not None:
+                assets.append(manual_asset)
+                seen_names.add(manual_asset.name)
+                if _is_image_block(block):
+                    image_order += 1
+                    continue
             if not _is_image_block(block):
                 continue
             bbox = _bbox_tuple(block.get("bbox"))
@@ -263,7 +273,7 @@ def read_asset_bytes(asset: PlaygroundImageAsset) -> tuple[bytes, str]:
     if not asset.source_path.exists():
         raise FileNotFoundError(str(asset.source_path))
 
-    if asset.kind == "page":
+    if asset.kind in {"page", "manual"}:
         media_type = mimetypes.guess_type(asset.source_path.name)[0] or "application/octet-stream"
         return asset.source_path.read_bytes(), media_type
 
@@ -330,7 +340,13 @@ def _render_markdown(
         for block in page.get("blocks") or []:
             label = str(block.get("label") or "text").lower()
             text = str(block.get("text") or "").strip()
+            manual_asset = _manual_asset_for_block(block, crop_by_block)
+            if manual_asset is not None and not _is_image_block(block):
+                lines.extend(["", f"![{_escape_markdown_alt(manual_asset.alt)}]({_asset_ref(manual_asset, image_ref_prefix=image_ref_prefix, relative_images=relative_images)})"])
             if _is_image_block(block):
+                if _is_embedded_in_table(block):
+                    crop_index += 1
+                    continue
                 block_id = str(block.get("block_id") or "")
                 asset = crop_by_block.get(block_id)
                 if asset is None:
@@ -345,6 +361,20 @@ def _render_markdown(
             lines.append("")
             if label in {"title", "sectionheader", "section_header", "heading"}:
                 lines.append(f"## {text}")
+            elif label == "table":
+                for asset in _embedded_table_assets(block, crop_by_block):
+                    lines.extend(["", f"![{_escape_markdown_alt(asset.alt)}]({_asset_ref(asset, image_ref_prefix=image_ref_prefix, relative_images=relative_images)})"])
+                table_markdown = _markdown_table_from_rows(block)
+                if table_markdown:
+                    lines.append(table_markdown)
+                else:
+                    lines.extend(["**Table**", "", text])
+            elif label == "code_block":
+                lines.extend(["```text", text, "```"])
+            elif label in {"equation_block", "chemical_block"}:
+                lines.extend(["$$", text, "$$"])
+            elif label in {"form", "table_of_contents", "bibliography", "complex_block", "blank_page"}:
+                lines.extend([f"**{label.replace('_', ' ').title()}**", "", text])
             elif label in {"caption", "pageheader", "pagefooter", "header", "footer"}:
                 lines.append(f"*{text}*")
             else:
@@ -362,8 +392,8 @@ def _render_html(
     by_page = _assets_by_page(assets)
     parts = [
         "<!doctype html><html><head><meta charset=\"utf-8\">",
-        "<title>army-ocr Result</title>",
-        "<style>body{font-family:Arial,sans-serif;line-height:1.55;margin:32px;color:#111827}img{max-width:100%;height:auto}figure{margin:18px 0}figcaption{color:#6b7280;font-size:13px}.page{break-after:page;margin-bottom:48px}.block-caption{color:#4b5563;font-style:italic}</style>",
+        "<title>Army-OCR Result</title>",
+        "<style>body{font-family:Arial,sans-serif;line-height:1.55;margin:32px;color:#111827}img{max-width:100%;height:auto}figure{margin:18px 0}figcaption{color:#6b7280;font-size:13px}.page{break-after:page;margin-bottom:48px}.block-caption{color:#4b5563;font-style:italic}.block-structured{white-space:pre-wrap;background:#fff7ed;border-left:4px solid #c2410c;padding:12px}</style>",
         "</head><body>",
     ]
     for page_index, page in enumerate(pages):
@@ -381,7 +411,13 @@ def _render_html(
             text = _html_escape(str(block.get("text") or "").strip()).replace("\n", "<br>")
             block_id = _html_escape(str(block.get("block_id") or ""))
             block_attr = f" data-block-id=\"{block_id}\"" if block_id else ""
+            manual_asset = _manual_asset_for_block(block, crop_by_block)
+            if manual_asset is not None and not _is_image_block(block):
+                parts.append(_html_figure(manual_asset, image_ref_prefix=image_ref_prefix, relative_images=relative_images, css_class="manual-image"))
             if _is_image_block(block):
+                if _is_embedded_in_table(block):
+                    crop_index += 1
+                    continue
                 asset = crop_by_block.get(str(block.get("block_id") or ""))
                 if asset is None:
                     crop_assets = [item for item in by_page.get(page_index, []) if item.kind == "crop"]
@@ -394,6 +430,18 @@ def _render_html(
                 continue
             if label in {"title", "sectionheader", "section_header", "heading"}:
                 parts.append(f"<h2 class=\"block block-{_html_escape(label)}\"{block_attr}>{text}</h2>")
+            elif label == "table":
+                figures = "".join(
+                    _html_figure(asset, image_ref_prefix=image_ref_prefix, relative_images=relative_images, css_class="table-image")
+                    for asset in _embedded_table_assets(block, crop_by_block)
+                )
+                table_html = _html_table_from_rows(block)
+                if table_html:
+                    parts.append(f"<div class=\"block block-table table-with-media\"{block_attr}>{figures}{table_html}</div>")
+                else:
+                    parts.append(f"<div class=\"block block-table table-with-media\"{block_attr}>{figures}<pre class=\"block-structured\">{text}</pre></div>")
+            elif label in {"table", "code_block", "equation_block", "chemical_block", "form", "complex_block"}:
+                parts.append(f"<pre class=\"block block-structured block-{_html_escape(label)}\"{block_attr}>{text}</pre>")
             elif label in {"caption", "pageheader", "pagefooter", "header", "footer"}:
                 parts.append(f"<p class=\"block block-caption block-{_html_escape(label)}\"{block_attr}>{text}</p>")
             else:
@@ -435,7 +483,7 @@ def _asset_ref(asset: PlaygroundImageAsset, *, image_ref_prefix: str, relative_i
 
 def _download_readme(request_id: str, assets: list[PlaygroundImageAsset]) -> str:
     return (
-        "army-ocr export\n"
+        "Army-OCR export\n"
         f"request_id: {request_id}\n\n"
         "Files:\n"
         "- result.md: Markdown with relative image links.\n"
@@ -470,6 +518,81 @@ def _is_image_block(block: Any) -> bool:
         return False
     label = str(block.get("label") or "").strip().lower()
     return label in IMAGE_BLOCK_LABELS
+
+
+def _is_embedded_in_table(block: Any) -> bool:
+    if not isinstance(block, dict):
+        return False
+    metadata = block.get("metadata")
+    return isinstance(metadata, dict) and bool(metadata.get("embedded_in_table"))
+
+
+def _embedded_table_assets(block: dict[str, Any], crop_by_block: dict[str, PlaygroundImageAsset]) -> list[PlaygroundImageAsset]:
+    metadata = block.get("metadata")
+    if not isinstance(metadata, dict):
+        return []
+    assets: list[PlaygroundImageAsset] = []
+    for item in metadata.get("embedded_images") or []:
+        if not isinstance(item, dict):
+            continue
+        asset = crop_by_block.get(str(item.get("block_id") or ""))
+        if asset is not None:
+            assets.append(asset)
+    return assets
+
+
+def _html_table_from_rows(block: dict[str, Any]) -> str:
+    metadata = block.get("metadata")
+    if not isinstance(metadata, dict):
+        return ""
+    rows = metadata.get("table_rows")
+    if not isinstance(rows, list):
+        return ""
+    rendered_rows: list[str] = []
+    for row in rows:
+        if not isinstance(row, list):
+            continue
+        cells = [_html_escape(str(cell or "").strip()).replace("\n", "<br>") for cell in row]
+        cells = [cell for cell in cells if cell]
+        if len(cells) < 2:
+            continue
+        rendered_rows.append(f"<tr><th>{cells[0]}</th>{''.join(f'<td>{cell}</td>' for cell in cells[1:])}</tr>")
+    if not rendered_rows:
+        return ""
+    return f"<table class=\"structured-table\"><tbody>{''.join(rendered_rows)}</tbody></table>"
+
+
+def _markdown_table_from_rows(block: dict[str, Any]) -> str:
+    metadata = block.get("metadata")
+    if not isinstance(metadata, dict):
+        return ""
+    rows = metadata.get("table_rows")
+    if not isinstance(rows, list):
+        return ""
+    normalized: list[list[str]] = []
+    for row in rows:
+        if not isinstance(row, list):
+            continue
+        cells = [str(cell or "").replace("|", "\\|").strip() for cell in row]
+        if any(cells):
+            normalized.append(cells)
+    if not normalized:
+        return ""
+    column_count = max(len(row) for row in normalized)
+    if column_count < 2:
+        return ""
+    for row in normalized:
+        while len(row) < column_count:
+            row.append("")
+    header = normalized[0]
+    body = normalized[1:]
+    return "\n".join(
+        [
+            f"| {' | '.join(header)} |",
+            f"| {' | '.join(['---'] * column_count)} |",
+            *[f"| {' | '.join(row)} |" for row in body],
+        ]
+    )
 
 
 def _bbox_tuple(value: Any) -> tuple[int, int, int, int] | None:
@@ -510,7 +633,59 @@ def _first_asset(grouped: dict[int, list[PlaygroundImageAsset]], page_index: int
 
 
 def _crop_assets_by_block(assets: list[PlaygroundImageAsset]) -> dict[str, PlaygroundImageAsset]:
-    return {asset.block_id: asset for asset in assets if asset.kind == "crop" and asset.block_id}
+    return {asset.block_id: asset for asset in assets if asset.kind in {"crop", "manual"} and asset.block_id}
+
+
+def _manual_asset_for_block(
+    block: dict[str, Any],
+    crop_by_block: dict[str, PlaygroundImageAsset],
+) -> PlaygroundImageAsset | None:
+    block_id = str(block.get("block_id") or "")
+    if not block_id:
+        return None
+    asset = crop_by_block.get(block_id)
+    if asset is None or asset.kind != "manual":
+        return None
+    return asset
+
+
+def _manual_image_asset(
+    record: dict[str, Any],
+    page_index: int,
+    page_number: int,
+    block: Any,
+) -> PlaygroundImageAsset | None:
+    if not isinstance(block, dict):
+        return None
+    metadata = block.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    edit_metadata = metadata.get(PLAYGROUND_EDIT_METADATA_KEY)
+    if not isinstance(edit_metadata, dict):
+        return None
+    image_payload = edit_metadata.get("manual_image")
+    if not isinstance(image_payload, dict):
+        return None
+    image_name = Path(str(image_payload.get("name") or "")).name
+    if not image_name:
+        return None
+    manual_paths = record.get("manual_image_paths")
+    if not isinstance(manual_paths, dict):
+        return None
+    source_path = manual_paths.get(image_name)
+    if not source_path:
+        return None
+    return PlaygroundImageAsset(
+        name=image_name,
+        relative_path=f"images/{image_name}",
+        page_index=page_index,
+        page_number=page_number,
+        kind="manual",
+        source_path=Path(str(source_path)),
+        bbox=None,
+        alt=str(block.get("text") or image_payload.get("alt") or f"Page {page_number} image"),
+        block_id=str(block.get("block_id") or ""),
+    )
 
 
 def _html_figure(
