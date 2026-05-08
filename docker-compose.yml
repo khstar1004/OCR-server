@@ -28,7 +28,7 @@ services:
       RUNTIME_CONFIG_PATH: ${RUNTIME_CONFIG_PATH:-/data/runtime/runtime-config/settings.json}
       AUTH_STORE_PATH: ${AUTH_STORE_PATH:-/data/runtime/runtime-config/auth.json}
       PLAYGROUND_ADMIN_USERNAME: ${PLAYGROUND_ADMIN_USERNAME:-admin}
-      PLAYGROUND_ADMIN_PASSWORD: ${PLAYGROUND_ADMIN_PASSWORD:-roqkfrhk1!}
+      PLAYGROUND_ADMIN_PASSWORD: ${PLAYGROUND_ADMIN_PASSWORD:-}
       PLAYGROUND_ADMIN_EMAIL: ${PLAYGROUND_ADMIN_EMAIL:-admin@local}
       PLAYGROUND_SESSION_DAYS: ${PLAYGROUND_SESSION_DAYS:-7}
       OCR_BACKEND: ${OCR_BACKEND:-chandra}
@@ -97,11 +97,11 @@ services:
       API_PREFIX: ${API_PREFIX:-/api/v1}
       OCR_SERVICE_URL: ${OCR_SERVICE_URL:-http://ocr-service:8000}
       PLAYGROUND_UPSTREAM_BASE_URL: ${PLAYGROUND_UPSTREAM_BASE_URL:-http://ocr-service:8000}
-      PLAYGROUND_OPERATOR_DEMO_URL: ${PLAYGROUND_OPERATOR_DEMO_URL:-http://127.0.0.1:18007/demo/jobs}
+      PLAYGROUND_OPERATOR_DEMO_URL: ${PLAYGROUND_OPERATOR_DEMO_URL:-}
       RUNTIME_CONFIG_PATH: ${RUNTIME_CONFIG_PATH:-/data/runtime/runtime-config/settings.json}
       AUTH_STORE_PATH: ${AUTH_STORE_PATH:-/data/runtime/runtime-config/auth.json}
       PLAYGROUND_ADMIN_USERNAME: ${PLAYGROUND_ADMIN_USERNAME:-admin}
-      PLAYGROUND_ADMIN_PASSWORD: ${PLAYGROUND_ADMIN_PASSWORD:-roqkfrhk1!}
+      PLAYGROUND_ADMIN_PASSWORD: ${PLAYGROUND_ADMIN_PASSWORD:-}
       PLAYGROUND_ADMIN_EMAIL: ${PLAYGROUND_ADMIN_EMAIL:-admin@local}
       PLAYGROUND_SESSION_DAYS: ${PLAYGROUND_SESSION_DAYS:-7}
       OCR_SERVICE_MODE: ${OCR_SERVICE_MODE:-native}
@@ -140,6 +140,9 @@ services:
       INPUT_ROOT: /data/watch
       OUTPUT_ROOT: /data/runtime/output
       MODELS_ROOT: /models
+    volumes:
+      - ${WATCH_DIR:-./news_pdfs}:/data/watch:ro
+      - ${DATA_DIR:-./news_data}:/data/runtime
     command: ["python3", "-m", "uvicorn", "app.playground_proxy:app", "--host", "0.0.0.0", "--port", "5000"]
     restart: unless-stopped
 
@@ -172,7 +175,7 @@ services:
       RUNTIME_CONFIG_PATH: ${RUNTIME_CONFIG_PATH:-/data/runtime/runtime-config/settings.json}
       AUTH_STORE_PATH: ${AUTH_STORE_PATH:-/data/runtime/runtime-config/auth.json}
       PLAYGROUND_ADMIN_USERNAME: ${PLAYGROUND_ADMIN_USERNAME:-admin}
-      PLAYGROUND_ADMIN_PASSWORD: ${PLAYGROUND_ADMIN_PASSWORD:-roqkfrhk1!}
+      PLAYGROUND_ADMIN_PASSWORD: ${PLAYGROUND_ADMIN_PASSWORD:-}
       PLAYGROUND_ADMIN_EMAIL: ${PLAYGROUND_ADMIN_EMAIL:-admin@local}
       PLAYGROUND_SESSION_DAYS: ${PLAYGROUND_SESSION_DAYS:-7}
       OCR_BACKEND: ${OCR_BACKEND:-chandra}
@@ -234,6 +237,7 @@ services:
       HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-1}
       TRANSFORMERS_OFFLINE: ${TRANSFORMERS_OFFLINE:-1}
       RUNTIME_CONFIG_PATH: ${RUNTIME_CONFIG_PATH:-/data/runtime/runtime-config/settings.json}
+      VLLM_EXPECT_MODEL_TYPE: ${VLLM_EXPECT_MODEL_TYPE:-qwen3_5}
       VLLM_MODEL_PATH: ${VLLM_MODEL_PATH:-/models/chandra-ocr-2}
       VLLM_MODEL_NAME: ${VLLM_MODEL_NAME:-chandra-ocr-2}
       VLLM_MAX_MODEL_LEN: ${VLLM_MAX_MODEL_LEN:-18000}

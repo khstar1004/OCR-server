@@ -1,6 +1,9 @@
 param(
+    [string]$UiTar = ".\\dist\\a-cong-ocr-ui_chandra.tar",
     [string]$AppTar = ".\\dist\\a-cong-ocr_chandra.tar",
     [string]$VllmTar = ".\\dist\\a-cong-vllm-openai_chandra.tar",
+    [string]$UiImageTag = "a-cong-ocr-ui:chandra",
+    [string]$AppImageTag = "a-cong-ocr:chandra",
     [string]$VllmImageTag = "a-cong-vllm-openai:chandra",
     [switch]$SkipRuntimeValidation,
     [switch]$SkipGpuRuntimeValidation
@@ -38,13 +41,19 @@ function Test-DockerImageExists {
     return $LASTEXITCODE -eq 0
 }
 
+$resolvedUiTar = Resolve-BundlePath -PathValue $UiTar
 $resolvedAppTar = Resolve-BundlePath -PathValue $AppTar
 $resolvedVllmTar = Resolve-BundlePath -PathValue $VllmTar
+
+if (-not (Test-Path $resolvedUiTar)) {
+    throw "UI image tar not found: $resolvedUiTar"
+}
 
 if (-not (Test-Path $resolvedAppTar)) {
     throw "App image tar not found: $resolvedAppTar"
 }
 
+& $dockerPath load -i $resolvedUiTar
 & $dockerPath load -i $resolvedAppTar
 
 if (Test-Path $resolvedVllmTar) {
@@ -55,6 +64,14 @@ else {
 }
 
 if (-not $SkipRuntimeValidation) {
+    if (-not (Test-DockerImageExists -ImageRef $UiImageTag)) {
+        throw "UI image tag not found after load: $UiImageTag"
+    }
+
+    if (-not (Test-DockerImageExists -ImageRef $AppImageTag)) {
+        throw "App image tag not found after load: $AppImageTag"
+    }
+
     if (-not (Test-DockerImageExists -ImageRef $VllmImageTag)) {
         throw "vLLM image tag not found after load: $VllmImageTag"
     }

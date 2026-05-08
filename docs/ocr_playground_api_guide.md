@@ -1,4 +1,4 @@
-# Army-OCR API Guide
+﻿# Army-OCR API Guide
 
 작성 기준: 현재 저장소의 `app/ocr_service.py`, `app/api/playground.py`, `app/services/datalab_compat.py`, `app/services/datalab_defense.py`
 
@@ -27,8 +27,8 @@ Army-OCR은 Chandra OCR 모델을 서버 API로 제공하는 범용 문서 OCR �
 
 | 환경 | Base URL |
 | --- | --- |
-| 로컬 preview | `http://127.0.0.1:18110` |
-| 인터넷망 preview | `http://14.50.225.33:18110` |
+| 로컬 preview | `http://127.0.0.1:18109` |
+| 국방망/운영망 | `http://<내부망-서버>:18109` |
 | nocodeaidev ingress | `https://nocodeaidev.army.mil:20443/a-cong-ocr-playground` |
 
 운영 연동 시에는 `/api/v1/*`를 기준으로 계약하는 것이 맞습니다.
@@ -51,19 +51,19 @@ Army-OCR은 Chandra OCR 모델을 서버 API로 제공하는 범용 문서 OCR �
 ### 4.1 Health 확인
 
 ```bash
-curl http://127.0.0.1:18110/health
+curl http://127.0.0.1:18109/health
 ```
 
 ### 4.2 지원 기능 확인
 
 ```bash
-curl http://127.0.0.1:18110/api/v1/capabilities
+curl http://127.0.0.1:18109/api/v1/capabilities
 ```
 
 ### 4.3 문서 변환
 
 ```bash
-curl -X POST "http://127.0.0.1:18110/api/v1/marker" \
+curl -X POST "http://127.0.0.1:18109/api/v1/marker" \
   -F "file=@sample.pdf" \
   -F "output_format=json,markdown,html,chunks" \
   -F "mode=balanced"
@@ -72,7 +72,7 @@ curl -X POST "http://127.0.0.1:18110/api/v1/marker" \
 응답에서 `request_id`를 받고 결과를 조회합니다.
 
 ```bash
-curl "http://127.0.0.1:18110/api/v1/marker/{request_id}"
+curl "http://127.0.0.1:18109/api/v1/marker/{request_id}"
 ```
 
 ### 4.4 Python polling 예시
@@ -81,7 +81,7 @@ curl "http://127.0.0.1:18110/api/v1/marker/{request_id}"
 import time
 import requests
 
-base_url = "http://127.0.0.1:18110"
+base_url = "http://127.0.0.1:18109"
 
 with open("sample.pdf", "rb") as file:
     submit = requests.post(
@@ -346,21 +346,21 @@ Form fields:
 직접 업로드 예시:
 
 ```bash
-curl -X POST "http://127.0.0.1:18110/api/v1/files" \
+curl -X POST "http://127.0.0.1:18109/api/v1/files" \
   -F "file=@sample.pdf"
 ```
 
 Upload slot 예시:
 
 ```bash
-curl -X POST "http://127.0.0.1:18110/api/v1/files/request_upload_url" \
+curl -X POST "http://127.0.0.1:18109/api/v1/files/request_upload_url" \
   -H "content-type: application/json" \
   -d '{"file_name":"sample.pdf","content_type":"application/pdf"}'
 
-curl -X PUT "http://127.0.0.1:18110/api/v1/files/uploads/{upload_id}" \
+curl -X PUT "http://127.0.0.1:18109/api/v1/files/uploads/{upload_id}" \
   --data-binary "@sample.pdf"
 
-curl "http://127.0.0.1:18110/api/v1/files/uploads/{upload_id}/confirm"
+curl "http://127.0.0.1:18109/api/v1/files/uploads/{upload_id}/confirm"
 ```
 
 ### Documents
@@ -378,15 +378,15 @@ curl "http://127.0.0.1:18110/api/v1/files/uploads/{upload_id}/confirm"
 문서 변환 예시:
 
 ```bash
-curl -X POST "http://127.0.0.1:18110/api/v1/create_document" \
+curl -X POST "http://127.0.0.1:18109/api/v1/create_document" \
   -H "content-type: application/json" \
   -d '{"file_id":"file_..."}'
 
-curl -X POST "http://127.0.0.1:18110/api/v1/convert_document" \
+curl -X POST "http://127.0.0.1:18109/api/v1/convert_document" \
   -H "content-type: application/json" \
   -d '{"document_id":"doc_...","output_format":"json,markdown"}'
 
-curl "http://127.0.0.1:18110/api/v1/convert_document/{request_id}"
+curl "http://127.0.0.1:18109/api/v1/convert_document/{request_id}"
 ```
 
 ### Extraction, forms, scoring
@@ -407,11 +407,11 @@ curl "http://127.0.0.1:18110/api/v1/convert_document/{request_id}"
 구조화 추출 예시:
 
 ```bash
-curl -X POST "http://127.0.0.1:18110/api/v1/generate_extraction_schemas" \
+curl -X POST "http://127.0.0.1:18109/api/v1/generate_extraction_schemas" \
   -H "content-type: application/json" \
   -d '{"field_names":["title","summary","document_date"]}'
 
-curl -X POST "http://127.0.0.1:18110/api/v1/extract_structured_data" \
+curl -X POST "http://127.0.0.1:18109/api/v1/extract_structured_data" \
   -H "content-type: application/json" \
   -d '{"document_id":"doc_...","schema":{"name":"report","fields":[{"name":"title"},{"name":"summary"}]}}'
 ```
@@ -429,31 +429,31 @@ curl -X POST "http://127.0.0.1:18110/api/v1/extract_structured_data" \
 Batch run 예시:
 
 ```bash
-curl -X POST "http://127.0.0.1:18110/api/v1/collections" \
+curl -X POST "http://127.0.0.1:18109/api/v1/collections" \
   -H "content-type: application/json" \
   -d '{"name":"demo-set","file_ids":["file_1","file_2"]}'
 
-curl -X POST "http://127.0.0.1:18110/api/v1/batch_runs" \
+curl -X POST "http://127.0.0.1:18109/api/v1/batch_runs" \
   -H "content-type: application/json" \
   -d '{"collection_id":1,"operation":"convert_document","params":{"output_format":"json"}}'
 
-curl "http://127.0.0.1:18110/api/v1/batch_runs/{batch_run_id}/results"
+curl "http://127.0.0.1:18109/api/v1/batch_runs/{batch_run_id}/results"
 ```
 
 Workflow 예시:
 
 ```bash
-curl "http://127.0.0.1:18110/api/v1/workflows/step_types"
+curl "http://127.0.0.1:18109/api/v1/workflows/step_types"
 
-curl -X POST "http://127.0.0.1:18110/api/v1/workflows/workflows" \
+curl -X POST "http://127.0.0.1:18109/api/v1/workflows/workflows" \
   -H "content-type: application/json" \
   -d '{"name":"OCR Workflow","steps":[{"step_key":"ocr","unique_name":"ocr_step","settings":{"max_pages":1}}]}'
 
-curl -X POST "http://127.0.0.1:18110/api/v1/workflows/workflows/{workflow_id}/execute" \
+curl -X POST "http://127.0.0.1:18109/api/v1/workflows/workflows/{workflow_id}/execute" \
   -H "content-type: application/json" \
   -d '{"input_config":{"file_urls":["C:/path/sample.pdf"]}}'
 
-curl "http://127.0.0.1:18110/api/v1/workflows/executions/{execution_id}"
+curl "http://127.0.0.1:18109/api/v1/workflows/executions/{execution_id}"
 ```
 
 ## 15. 체험 UI 경로
@@ -584,3 +584,4 @@ curl -b cookies.txt -X PUT "$BASE_URL/playground/api/admin/runtime-settings" \
 - 파일/컬렉션/템플릿/평가/배치 계열은 로컬 JSON/파일시스템 기반 구현입니다.
 - Track Changes, Form Filling, Extraction Schema 등은 현재 OCR 결과와 JSON/text 기반 보조 기능입니다.
 - Datalab의 custom processor 전체 버전관리, transfer/archive/restore, table recognition 전용 API는 현재 구현된 OCR 서비스 API가 아니므로 이 Guide에 endpoint로 넣지 않습니다.
+

@@ -261,7 +261,7 @@ class AuthStore:
             username = self._normalize_username(
                 str(getattr(self.settings, "playground_admin_username", None) or os.getenv("PLAYGROUND_ADMIN_USERNAME") or "admin")
             )
-            password = str(getattr(self.settings, "playground_admin_password", None) or os.getenv("PLAYGROUND_ADMIN_PASSWORD") or "roqkfrhk1!")
+            password = self._bootstrap_admin_password()
             email = str(getattr(self.settings, "playground_admin_email", None) or os.getenv("PLAYGROUND_ADMIN_EMAIL") or "admin@local")
 
             existing = self._find_user_by_username(users, username)
@@ -291,6 +291,30 @@ class AuthStore:
                 "bootstrap": True,
             }
             self._write_payload(payload)
+
+    def _bootstrap_admin_password(self) -> str:
+        raw_value = getattr(self.settings, "playground_admin_password", None)
+        if raw_value is None:
+            raw_value = os.getenv("PLAYGROUND_ADMIN_PASSWORD")
+        password = str(raw_value or "").strip()
+        if not self._requires_explicit_admin_password():
+            return password or "roqkfrhk1!"
+        if self._is_blocked_bootstrap_password(password):
+            raise RuntimeError(
+                "PLAYGROUND_ADMIN_PASSWORD must be set to a site-specific value before starting in docker/k8s/production mode."
+            )
+        if len(password) < 12:
+            raise RuntimeError("PLAYGROUND_ADMIN_PASSWORD must be at least 12 characters in docker/k8s/production mode.")
+        return password
+
+    def _requires_explicit_admin_password(self) -> bool:
+        app_env = str(getattr(self.settings, "app_env", None) or os.getenv("APP_ENV") or "").strip().lower()
+        return app_env in {"docker", "k8s", "production", "prod"}
+
+    @staticmethod
+    def _is_blocked_bootstrap_password(password: str) -> bool:
+        value = str(password or "").strip()
+        return value in {"", "admin123!", "roqkfrhk1!", "CHANGE_ME_STRONG_ADMIN_PASSWORD"} or value.upper().startswith("CHANGE_ME")
 
     def _sync_bootstrap_admin(
         self,

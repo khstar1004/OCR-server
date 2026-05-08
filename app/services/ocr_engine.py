@@ -577,8 +577,8 @@ class OCREngine:
             safe_metadata["source"] = "army_ocr"
 
         return {
-            "engine": "army_ocr",
-            "backend": "army_ocr",
+            "engine": engine_name,
+            "backend": backend_name,
             "model_id": "Army-OCR",
             "prompt_type": safe_metadata.get("prompt_type")
             or self._runtime_str("chandra_prompt_type", self.settings.chandra_prompt_type or "ocr_layout"),

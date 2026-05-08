@@ -299,14 +299,34 @@
         <span>영역 종류</span>
         <select id="editBlockLabel"></select>
       </label>
-      <label class="edit-field">
+      <label class="edit-field" id="editTextField">
         <span>텍스트</span>
         <textarea id="editBlockText" rows="8"></textarea>
       </label>
-      <label class="edit-field edit-table-field" id="editTableField" hidden>
-        <span>표</span>
-        <textarea id="editTableText" rows="6" spellcheck="false"></textarea>
-      </label>
+      <section class="edit-field edit-table-field" id="editTableField" hidden>
+        <div class="edit-table-head">
+          <span>표</span>
+          <div class="edit-table-actions" aria-label="표 편집">
+            <button type="button" id="editTableAddRow">행 추가</button>
+            <button type="button" id="editTableAddColumn">열 추가</button>
+            <button type="button" id="editTableRemoveRow">행 삭제</button>
+            <button type="button" id="editTableRemoveColumn">열 삭제</button>
+          </div>
+        </div>
+        <div class="edit-table-grid" id="editTableGrid"></div>
+        <textarea id="editTableText" rows="6" spellcheck="false" hidden></textarea>
+      </section>
+      <section class="edit-merge-field" id="editMergeField" hidden>
+        <div class="edit-merge-head">
+          <span>같은 표로 합칠 영역</span>
+          <div class="edit-merge-actions">
+            <button type="button" id="editMergeNextOne">아래 1개</button>
+            <button type="button" id="editMergeNextThree">아래 3개</button>
+            <button type="button" id="editMergeReset">초기화</button>
+          </div>
+        </div>
+        <div class="edit-merge-list" id="editMergeList"></div>
+      </section>
       <section class="edit-image-field" id="editImageField">
         <div class="edit-image-head">
           <span>이미지</span>

@@ -6,7 +6,7 @@ metadata:
 type: Opaque
 stringData:
   TARGET_API_TOKEN: ""
-  PLAYGROUND_ADMIN_PASSWORD: "roqkfrhk1!"
+  PLAYGROUND_ADMIN_PASSWORD: "CHANGE_ME_STRONG_ADMIN_PASSWORD"
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -45,7 +45,7 @@ data:
   OCR_QUALITY_MIN_CHARS: "80"
   OCR_QUALITY_MIN_KOREAN_RATIO: "0.35"
   PDF_RENDER_DPI: "300"
-  CHANDRA_METHOD: "hf"
+  CHANDRA_METHOD: "vllm"
   CHANDRA_MODEL_ID: "datalab-to/chandra-ocr-2"
   CHANDRA_MODEL_DIR: "/models/chandra-ocr-2"
   CHANDRA_PROMPT_TYPE: "ocr_layout"
@@ -56,7 +56,7 @@ data:
   VLLM_API_BASE: "http://a-cong-vllm-ocr:5000/v1"
   VLLM_MODEL_NAME: "chandra-ocr-2"
   VLLM_MODEL_PATH: "/models/chandra-ocr-2"
-  VLLM_EXPECT_MODEL_TYPE: ""
+  VLLM_EXPECT_MODEL_TYPE: "qwen3_5"
   VLLM_MAX_MODEL_LEN: "16384"
   VLLM_GPU_MEMORY_UTILIZATION: "0.80"
   VLLM_MAX_NUM_SEQS: "1"
@@ -125,6 +125,8 @@ metadata:
     app.kubernetes.io/component: app
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: a-cong-ocr
@@ -139,7 +141,7 @@ spec:
         - name: harbor-reg-cred
       initContainers:
         - name: init-runtime-dirs
-          image: nocodeaidev.army.mil:20443/nocodeaidev/a-cong-ocr-ui:chandra
+          image: nocodeaidev.army.mil:20443/nocodeaidev/a-cong-ocr-app-ui:chandra
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
@@ -157,7 +159,7 @@ spec:
               mountPath: /data/runtime
       containers:
         - name: app
-          image: nocodeaidev.army.mil:20443/nocodeaidev/a-cong-ocr-ui:chandra
+          image: nocodeaidev.army.mil:20443/nocodeaidev/a-cong-ocr-app-ui:chandra
           imagePullPolicy: IfNotPresent
           command:
             - python3
@@ -236,6 +238,8 @@ metadata:
     app.kubernetes.io/component: ocr-service
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: a-cong-ocr
@@ -250,7 +254,7 @@ spec:
         - name: harbor-reg-cred
       containers:
         - name: ocr-service
-          image: nocodeaidev.army.mil:20443/nocodeaidev/a-cong-ocr:chandra
+          image: nocodeaidev.army.mil:20443/nocodeaidev/a-cong-ocr-api:chandra
           imagePullPolicy: IfNotPresent
           command:
             - python3
@@ -350,6 +354,8 @@ metadata:
     app.kubernetes.io/component: playground
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: a-cong-ocr
@@ -364,7 +370,7 @@ spec:
         - name: harbor-reg-cred
       containers:
         - name: playground
-          image: nocodeaidev.army.mil:20443/nocodeaidev/a-cong-ocr-ui:chandra
+          image: nocodeaidev.army.mil:20443/nocodeaidev/a-cong-ocr-playground:chandra
           imagePullPolicy: IfNotPresent
           command:
             - python

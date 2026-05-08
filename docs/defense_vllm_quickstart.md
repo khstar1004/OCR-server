@@ -3,11 +3,13 @@
 This quickstart is for an offline defense-network deployment using:
 
 - `a-cong-ocr:chandra`
+- `a-cong-ocr-ui:chandra`
 - `a-cong-vllm-openai:chandra`
 - local Chandra model files in `news_models/chandra-ocr-2`
 
 ## Required bundle
 
+- `dist/a-cong-ocr-ui_chandra.tar`
 - `dist/a-cong-ocr_chandra.tar`
 - `dist/a-cong-vllm-openai_chandra.tar`
 - project source tree
@@ -19,8 +21,9 @@ This quickstart is for an offline defense-network deployment using:
 chmod +x ./scripts/load_offline_images.sh ./scripts/start_defense_remote_ocr.sh
 ./scripts/load_offline_images.sh
 cp -f ./.env.example ./.env
+sed -i 's/^PLAYGROUND_ADMIN_PASSWORD=.*/PLAYGROUND_ADMIN_PASSWORD=<site-specific-strong-password>/' ./.env
 sed -i 's/^CHANDRA_METHOD=.*/CHANDRA_METHOD=vllm/' ./.env
-sed -i 's|^OCR_SERVICE_URL=.*|OCR_SERVICE_URL=|' ./.env
+sed -i 's|^OCR_SERVICE_URL=.*|OCR_SERVICE_URL=http://ocr-service:8000|' ./.env
 mkdir -p ./model_cache
 ```
 
@@ -55,7 +58,7 @@ docker compose --profile vllm down
 
 ## When to use remote-ocr instead
 
-Use `remote-ocr` only if you need a separate OCR API adapter container.
+Use `remote-ocr` when you need the full `app + playground + ocr-service + vllm-ocr` split stack.
 
 ```bash
 docker compose --profile remote-ocr up -d

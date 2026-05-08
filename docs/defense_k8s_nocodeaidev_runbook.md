@@ -31,6 +31,18 @@ POST https://nocodeaidev.army.mil:20443/a-cong-ocr-api/api/v1/marker
 GET  https://nocodeaidev.army.mil:20443/a-cong-ocr-playground/
 ```
 
+## 이번 수정분별 반입 판단
+
+| 수정분 | 반입 영향 | 안전한 반입 방식 |
+| --- | --- | --- |
+| Playground 신규/수정 | `a-cong-ocr-playground` Deployment, Service, Ingress가 필요합니다. OCR은 내부 `a-cong-ocr-service:5000`으로 proxy합니다. | 기존 OCR/vLLM이 정상인 클러스터에서는 `migrate_public_ocr_split_ui.sh` 또는 `replace_public_ocr_ui_image.sh`만 사용합니다. vLLM은 재시작하지 않습니다. |
+| 국회 OCR UI/CSS 수정 | app/playground 정적 파일과 template만 바뀌는 변경입니다. 모델/PVC/vLLM과 무관합니다. | UI 이미지만 교체합니다. `UPDATE_OCR_API_IMAGE=1`, `UPDATE_VLLM_IMAGE=1`은 쓰지 않습니다. |
+| 국회 OCR API/후처리 코드 수정 | OCR API 이미지가 바뀝니다. vLLM 모델 서버는 그대로 둬도 됩니다. | `UPDATE_OCR_API_IMAGE=1`로 `a-cong-ocr-service`만 같이 교체합니다. vLLM 재시작은 금지합니다. |
+| vLLM 이미지/모델/`VLLM_MAX_MODEL_LEN` 수정 | GPU quota와 HAMi 스케줄링에 직접 영향이 있습니다. RollingUpdate는 quota 초과를 만들 수 있습니다. | `a-cong-vllm-ocr`는 항상 `Recreate` 또는 `scale 0 -> patch -> scale 1`로 처리합니다. |
+| 컨테이너 분리 | app/playground/OCR API/vLLM의 이미지와 port가 분리됩니다. | app/playground는 UI 이미지, OCR API는 `a-cong-ocr`, vLLM은 `a-cong-vllm-openai`입니다. vLLM에는 Ingress를 만들지 않습니다. |
+
+현장에서 이미 만든 CSS 반영 이미지가 `nocodeaidev.army.mil:20443/nocodeaidev/a-cong-ocr:chandra-cssfix-20260429`뿐이면, 이 이미지를 임시 UI 이미지로 써도 됩니다. 풀 이미지라서 무겁지만 `app.main`과 `app.playground_proxy`를 실행할 수 있어 app/playground 반입은 가능합니다. 다만 최종 권장은 인터넷 준비 PC에서 `Dockerfile.ui`로 `a-cong-ocr-ui:chandra`를 새로 만들어 Harbor에 올리는 것입니다.
+
 ## 이미지 재반입 없이 설정 바꾸기
 
 운영 중 자주 바뀌는 값은 세 단계 중 하나로 처리합니다.
@@ -43,7 +55,7 @@ GET  https://nocodeaidev.army.mil:20443/a-cong-ocr-playground/
 
 - 기본 아이디는 ConfigMap의 `PLAYGROUND_ADMIN_USERNAME`입니다.
 - 기본 비밀번호는 Secret의 `PLAYGROUND_ADMIN_PASSWORD`입니다.
-- 현재 배포 YAML의 초기값은 `admin / roqkfrhk1!`입니다.
+- 배포 전 반드시 `CHANGE_ME_STRONG_ADMIN_PASSWORD`를 현장 비밀번호로 교체합니다.
 - 최초 반입 후 Secret 값을 현장 비밀번호로 바꾸고 playground/app/OCR API Pod를 재시작합니다.
 
 관리자 로그인 후 runtime settings API:
@@ -170,7 +182,7 @@ news_models/chandra-ocr-2/
 
 - `--trust-remote-code`를 항상 붙입니다.
 - `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`로 폐쇄망 동작을 강제합니다.
-- `VLLM_EXPECT_MODEL_TYPE`을 빈 값으로 두면 `/models/chandra-ocr-2/config.json`의 `model_type`을 자동 감지합니다.
+- `VLLM_EXPECT_MODEL_TYPE=qwen3_5`를 유지해 `/models/chandra-ocr-2/config.json`의 `model_type`가 바뀐 모델/오염된 스냅샷을 시작 전에 차단합니다.
 - `qwen2_5`, `qwen3_5`처럼 현장 모델이 달라도 하드코딩된 model type 때문에 먼저 죽지 않습니다.
 - 이미지 시작 시 `qwen2_5 -> qwen2`, `qwen2_5_text -> qwen2` 호환 alias를 자동 등록합니다.
 - 포함된 Chandra 모델은 top-level `qwen3_5`이지만, `Qwen2VLImageProcessorFast`, `Qwen2Tokenizer`도 같이 쓰므로 둘 다 검증합니다.
@@ -270,7 +282,8 @@ SKIP_HARBOR_PUSH=1 ./scripts/deploy_public_ocr_closed_network.sh
 - Harbor push
 - k8s manifest apply
 - 선택한 `UI_IMAGE`, `OCR_API_IMAGE`, `VLLM_IMAGE`, `HOST`, `NAMESPACE`, `IMAGE_PULL_SECRET` 값을 매니페스트에 반영
-- vLLM을 잠시 0 replica로 내린 뒤 모델 PVC에 `chandra-ocr-2`를 staging 경로로 복사하고 검증 후 교체
+- 기본값 `STAGE_MODEL_BEFORE_VLLM=1`로 vLLM Deployment를 먼저 0 replica로 apply해서 빈 모델 PVC 상태로 GPU를 잡지 않게 함
+- 모델 PVC에 `chandra-ocr-2`를 staging 경로로 복사하고 검증 후 교체
 - vLLM, OCR API, playground, app rollout 대기
 - app/playground/OCR API/vLLM 내부 health 및 Ingress 외부 health 확인
 
@@ -289,6 +302,14 @@ chmod +x scripts/*.sh
 ```bash
 UI_IMAGE='nocodeaidev.army.mil:20443/nocodeaidev/a-cong-ocr-ui:chandra-20260430' \
 UI_TAR='dist/a-cong-ocr-ui_chandra.tar' \
+./scripts/replace_public_ocr_ui_image.sh
+```
+
+현재 현장에 CSS fix 풀 이미지 태그만 있으면:
+
+```bash
+UI_IMAGE='nocodeaidev.army.mil:20443/nocodeaidev/a-cong-ocr:chandra-cssfix-20260429' \
+UI_TAR='dist/a-cong-ocr_chandra-cssfix-20260429.tar' \
 ./scripts/replace_public_ocr_ui_image.sh
 ```
 
@@ -494,6 +515,20 @@ curl -k -X POST \
   -F "page_number=1"
 ```
 
+클러스터 내부 Service/ClusterIP로 볼 때는 HTTPS가 아니라 HTTP입니다.
+
+```bash
+curl --noproxy '*' -s http://10.233.0.251:5000/health
+
+curl --noproxy '*' -sS \
+  -w "HTTP_CODE=%{http_code} SIZE=%{size_download}\n" \
+  -F "file=@./sample.pdf" \
+  http://10.233.0.251:5000/api/v1/ocr/pdf \
+  -o /tmp/r.json
+```
+
+`/api/v1/ocr/pdf` 직접 호출은 결과 파일을 `/data/runtime/output`에 남기는 job 방식이 아닙니다. HTTP 응답 JSON이 결과이므로 위처럼 `/tmp/r.json`으로 저장해서 확인합니다. 웹 `demo/jobs` 또는 playground/job runner 경로는 `request_id`별 결과를 runtime PVC 아래에 남깁니다.
+
 정상 기대:
 
 - HTTP 200
@@ -536,6 +571,32 @@ curl -k -X POST \
 
 - app은 외부 OCR URL이 아니라 내부 `http://a-cong-ocr-service:5000`으로 호출해야 합니다.
 - ConfigMap의 `OCR_SERVICE_URL`을 외부 Ingress URL로 바꾸지 마세요.
+
+`max_tokens=12384 cannot be greater than max_model_len=4096`:
+
+- vLLM이 아직 `VLLM_MAX_MODEL_LEN=16384`로 재기동되지 않은 상태입니다.
+- `kubectl -n nocodeaidev exec deploy/a-cong-vllm-ocr -- printenv VLLM_MAX_MODEL_LEN`이 `16384`인지 확인합니다.
+
+`exceeded quota: tenant-resourcequota`:
+
+- vLLM RollingUpdate 중 기존 Pod와 새 Pod가 동시에 떠서 memory quota를 넘은 것입니다.
+- `kubectl -n nocodeaidev patch deploy a-cong-vllm-ocr --type=merge -p '{"spec":{"strategy":{"type":"Recreate"}}}'` 후 재시작하거나, 수동으로 `scale 0 -> 변경 -> scale 1` 순서를 씁니다.
+
+`ssl3_get_record:wrong version number`:
+
+- 내부 Service에 HTTPS로 붙은 것입니다. `10.233.0.251:5000`, `a-cong-ocr-service:5000`, `a-cong-vllm-ocr:5000`은 모두 HTTP입니다.
+
+`422 Unprocessable Entity`:
+
+- multipart field가 잘못된 것입니다. PDF/image 업로드는 `-F "file=@./sample.pdf"` 형태여야 합니다.
+
+`could not resolve host: POST`:
+
+- curl 줄바꿈이나 역슬래시가 깨진 것입니다. MobaXterm에서는 우선 한 줄 명령으로 다시 실행합니다.
+
+`FzErrorFormat: no objects found`:
+
+- PDF가 비었거나 깨졌거나 암호화/특수 PDF라 renderer가 읽지 못한 것입니다. 같은 파일을 `ls -lh`, `file`, `head -c 16`으로 먼저 확인합니다.
 
 ## 11. 롤백과 제거
 

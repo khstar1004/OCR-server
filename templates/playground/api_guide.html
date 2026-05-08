@@ -89,8 +89,8 @@
           <table>
             <thead><tr><th>항목</th><th>값</th><th>설명</th></tr></thead>
             <tbody>
-              <tr><td>Preview Base URL</td><td><code>http://14.50.225.33:18110</code></td><td>인터넷망 체험용 주소</td></tr>
-              <tr><td>Local Base URL</td><td><code>http://127.0.0.1:18110</code></td><td>현재 PC preview 주소</td></tr>
+              <tr><td>Preview Base URL</td><td><code>http://&lt;내부망-서버&gt;:18109</code></td><td>국방망/운영망 내부 주소</td></tr>
+              <tr><td>Local Base URL</td><td><code>http://127.0.0.1:18109</code></td><td>현재 PC preview 주소</td></tr>
               <tr><td>API Prefix</td><td><code>/api/v1</code></td><td>외부 연동 계약의 기준 prefix</td></tr>
               <tr><td>OpenAPI</td><td><code>/openapi.json</code></td><td>실제 등록된 endpoint 목록</td></tr>
               <tr><td>Auth</td><td>Preview 없음</td><td>운영 공개 시 gateway/reverse proxy 인증 권장</td></tr>
@@ -101,7 +101,7 @@
 
           <h2 id="quickstart">Quickstart</h2>
           <p>가장 단순한 사용법은 파일을 <code>/api/v1/marker</code>에 올리고, <code>request_id</code>로 결과를 조회하는 흐름입니다.</p>
-          <pre><code>BASE_URL="http://127.0.0.1:18110"
+          <pre><code>BASE_URL="http://127.0.0.1:18109"
 
 curl "$BASE_URL/health"
 curl "$BASE_URL/api/v1/capabilities"
@@ -117,7 +117,7 @@ curl "$BASE_URL/api/v1/marker/{request_id}"</code></pre>
           <pre><code>import time
 import requests
 
-base_url = "http://127.0.0.1:18110"
+base_url = "http://127.0.0.1:18109"
 
 with open("sample.pdf", "rb") as file:
     submit = requests.post(

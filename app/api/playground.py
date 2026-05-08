@@ -584,20 +584,55 @@ def _apply_playground_block_edit(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="block not found")
 
     block = blocks[block_index]
+    merge_indices = _normalize_playground_merge_indices(
+        payload.get("merge_block_indices"),
+        block_index=block_index,
+        block_count=len(blocks),
+    )
+    merged_source_blocks = [copy.deepcopy(blocks[index]) for index in merge_indices if isinstance(blocks[index], dict)]
     updated_at = utcnow_iso()
     original_label = str(block.get("label") or "text")
     label = _normalize_playground_edit_label(payload.get("label", original_label))
-    text = _normalize_playground_edit_text(payload.get("text", block.get("text") or ""))
+    fallback_text = block.get("text") or ""
+    if "text" not in payload and len(merge_indices) > 1:
+        fallback_text = "\n".join(
+            str(item.get("text") or "").strip()
+            for item in merged_source_blocks
+            if str(item.get("text") or "").strip()
+        )
+    text = _normalize_playground_edit_text(payload.get("text", fallback_text))
     table_rows = _normalize_playground_table_rows(payload.get("table_rows")) if "table_rows" in payload else None
+    if label == "table" and table_rows is None and len(merge_indices) > 1:
+        table_rows = _table_rows_from_merged_blocks(merged_source_blocks)
 
     metadata = copy.deepcopy(block.get("metadata")) if isinstance(block.get("metadata"), dict) else {}
     edit_metadata = copy.deepcopy(metadata.get(PLAYGROUND_EDIT_METADATA_KEY)) if isinstance(metadata.get(PLAYGROUND_EDIT_METADATA_KEY), dict) else {}
     edit_metadata.setdefault("original_label", original_label)
     edit_metadata["edited"] = True
     edit_metadata["updated_at"] = updated_at
+    if len(merge_indices) > 1:
+        edit_metadata["merged_block_indices"] = merge_indices
+        edit_metadata["merged_block_ids"] = [
+            str(item.get("block_id") or "")
+            for item in merged_source_blocks
+            if str(item.get("block_id") or "").strip()
+        ]
+        edit_metadata["merged_block_labels"] = [
+            str(item.get("label") or "")
+            for item in merged_source_blocks
+            if str(item.get("label") or "").strip()
+        ]
+        edit_metadata["merged_block_texts"] = [
+            str(item.get("text") or "")
+            for item in merged_source_blocks
+            if str(item.get("text") or "").strip()
+        ]
 
     block["label"] = label
     block["text"] = text
+    merged_bbox = _union_playground_block_bboxes(merged_source_blocks) if len(merge_indices) > 1 else None
+    if merged_bbox is not None:
+        block["bbox"] = merged_bbox
     if label == "table":
         if table_rows is not None:
             metadata["table_rows"] = table_rows
@@ -607,6 +642,16 @@ def _apply_playground_block_edit(
         metadata.pop("table_rows", None)
 
     manual_image_paths = dict(record.get("manual_image_paths") or {}) if isinstance(record.get("manual_image_paths"), dict) else {}
+    if len(merge_indices) > 1:
+        for removed_index in merge_indices:
+            if removed_index == block_index:
+                continue
+            removed_block = blocks[removed_index]
+            if isinstance(removed_block, dict):
+                removed_name = _manual_image_name_from_block(removed_block)
+                if removed_name:
+                    manual_image_paths.pop(removed_name, None)
+
     if payload.get("remove_manual_image") is True:
         previous_image = edit_metadata.get("manual_image")
         if isinstance(previous_image, dict):
@@ -634,6 +679,9 @@ def _apply_playground_block_edit(
 
     metadata[PLAYGROUND_EDIT_METADATA_KEY] = edit_metadata
     block["metadata"] = metadata
+    if len(merge_indices) > 1:
+        for removed_index in sorted((index for index in merge_indices if index != block_index), reverse=True):
+            del blocks[removed_index]
     page["text"] = _page_text_from_blocks(blocks)
 
     updated["json"] = json_payload
@@ -652,6 +700,25 @@ def _apply_playground_block_edit(
     record_changes = {"manual_image_paths": manual_image_paths}
     _refresh_playground_result_outputs(record={**record, **record_changes}, result=updated)
     return updated, record_changes
+
+
+def _normalize_playground_merge_indices(value: Any, *, block_index: int, block_count: int) -> list[int]:
+    if value is None:
+        return [block_index]
+    if not isinstance(value, list):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="merge_block_indices must be a list")
+    indices = {block_index}
+    for item in value[:80]:
+        if isinstance(item, bool):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="merge block index must be an integer")
+        try:
+            index = int(item)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="merge block index must be an integer") from None
+        if index < 0 or index >= block_count:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="merge block index is out of range")
+        indices.add(index)
+    return sorted(indices)
 
 
 def _normalize_playground_edit_label(value: Any) -> str:
@@ -681,6 +748,53 @@ def _normalize_playground_table_rows(value: Any) -> list[list[str]]:
         if any(cells):
             rows.append(cells)
     return rows
+
+
+def _table_rows_from_merged_blocks(blocks: list[dict[str, Any]]) -> list[list[str]]:
+    lines: list[str] = []
+    for block in blocks:
+        for line in str(block.get("text") or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+            cleaned = line.strip()
+            if cleaned:
+                lines.append(cleaned)
+    if len(lines) >= 2 and len(lines) % 2 == 0:
+        return [[lines[index], lines[index + 1]] for index in range(0, len(lines), 2)]
+    return [[line, ""] for line in lines]
+
+
+def _union_playground_block_bboxes(blocks: list[dict[str, Any]]) -> list[float] | None:
+    boxes: list[list[float]] = []
+    for block in blocks:
+        bbox = block.get("bbox")
+        if not isinstance(bbox, list) or len(bbox) != 4:
+            continue
+        try:
+            x0, y0, x1, y1 = [float(value) for value in bbox]
+        except (TypeError, ValueError):
+            continue
+        if x1 > x0 and y1 > y0:
+            boxes.append([x0, y0, x1, y1])
+    if not boxes:
+        return None
+    return [
+        min(box[0] for box in boxes),
+        min(box[1] for box in boxes),
+        max(box[2] for box in boxes),
+        max(box[3] for box in boxes),
+    ]
+
+
+def _manual_image_name_from_block(block: dict[str, Any]) -> str:
+    metadata = block.get("metadata")
+    if not isinstance(metadata, dict):
+        return ""
+    edit_metadata = metadata.get(PLAYGROUND_EDIT_METADATA_KEY)
+    if not isinstance(edit_metadata, dict):
+        return ""
+    manual_image = edit_metadata.get("manual_image")
+    if not isinstance(manual_image, dict):
+        return ""
+    return Path(str(manual_image.get("name") or "")).name
 
 
 def _save_playground_manual_image(

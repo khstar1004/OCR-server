@@ -14,6 +14,7 @@ EXPECTED_GPU_REQUEST="${EXPECTED_GPU_REQUEST:-1}"
 EXPECTED_GPUMEM_PERCENTAGE="${EXPECTED_GPUMEM_PERCENTAGE:-30}"
 EXPECTED_GPUCORES="${EXPECTED_GPUCORES:-30}"
 REQUIRE_HAMI_PERCENTAGE_RESOURCES="${REQUIRE_HAMI_PERCENTAGE_RESOURCES:-1}"
+MANIFEST="${MANIFEST:-k8s/defense-remote-ocr.nocodeaidev.yaml}"
 
 log() {
   printf '\n[%s] %s\n' "$(date '+%H:%M:%S')" "$*"
@@ -47,6 +48,38 @@ extract_allocated_resource() {
 }
 
 require_cmd kubectl
+
+log "Checking local manifest contract"
+if [[ -f "${MANIFEST}" ]]; then
+  grep -Eq "host:[[:space:]]+${HOST}(:[0-9]+)?" "${MANIFEST}" || fail "Manifest does not contain host ${HOST}: ${MANIFEST}"
+  if grep -Eq "host:[[:space:]]+${HOST}:[0-9]+" "${MANIFEST}"; then
+    fail "Ingress host in YAML must not include a port. Use host: ${HOST}; keep ${HOST}:20443 only in curl/browser URLs."
+  fi
+  grep -q "ingressClassName: ${INGRESS_CLASS}" "${MANIFEST}" || fail "Manifest does not use ingressClassName: ${INGRESS_CLASS}"
+  grep -q "storageClassName: ${STORAGE_CLASS}" "${MANIFEST}" || fail "Manifest does not use storageClassName: ${STORAGE_CLASS}"
+  grep -q "claimName: a-cong-ocr-models-pvc" "${MANIFEST}" || fail "Manifest does not mount a-cong-ocr-models-pvc"
+  grep -q "claimName: a-cong-ocr-model-cache-pvc" "${MANIFEST}" || fail "Manifest does not mount a-cong-ocr-model-cache-pvc"
+  grep -q "claimName: a-cong-ocr-runtime-pvc" "${MANIFEST}" || fail "Manifest does not mount a-cong-ocr-runtime-pvc"
+  grep -q "strategy:" "${MANIFEST}" || fail "Manifest must define a Deployment strategy for vLLM"
+  grep -q "type: Recreate" "${MANIFEST}" || fail "Manifest must use Recreate strategy for a-cong-vllm-ocr"
+  grep -q "schedulerName: hami-scheduler" "${MANIFEST}" || fail "Manifest must schedule vLLM through hami-scheduler"
+  grep -q "hami.io/node-scheduler-policy: binpack" "${MANIFEST}" || fail "Manifest missing HAMi node scheduler annotation"
+  grep -q "hami.io/gpu-scheduler-policy: spread" "${MANIFEST}" || fail "Manifest missing HAMi GPU scheduler annotation"
+  grep -q "nvidia.com/vgpu-mode: hami-core" "${MANIFEST}" || fail "Manifest missing HAMi vGPU mode annotation"
+  grep -q "VLLM_API_BASE: \"http://a-cong-vllm-ocr:5000/v1\"" "${MANIFEST}" || fail "OCR API must call internal vLLM over http://a-cong-vllm-ocr:5000/v1"
+  grep -q "VLLM_EXPECT_MODEL_TYPE: \"qwen3_5\"" "${MANIFEST}" || fail "Manifest must set VLLM_EXPECT_MODEL_TYPE=qwen3_5"
+  grep -q "VLLM_MAX_MODEL_LEN: \"16384\"" "${MANIFEST}" || fail "Manifest must set VLLM_MAX_MODEL_LEN=16384"
+  grep -q "VLLM_GPU_MEMORY_UTILIZATION: \"0.80\"" "${MANIFEST}" || fail "Manifest must set VLLM_GPU_MEMORY_UTILIZATION=0.80"
+  grep -q -- "--distributed-executor-backend" "${MANIFEST}" || fail "vLLM args missing --distributed-executor-backend"
+  grep -q -- "--disable-custom-all-reduce" "${MANIFEST}" || fail "vLLM args missing --disable-custom-all-reduce"
+  grep -q -- "--enforce-eager" "${MANIFEST}" || fail "vLLM args missing --enforce-eager"
+  grep -q -- "--max-num-seqs" "${MANIFEST}" || fail "vLLM args missing --max-num-seqs"
+  grep -Fq "path: ${APP_PREFIX}(/|$)(.*)" "${MANIFEST}" || fail "Manifest missing app Ingress prefix ${APP_PREFIX}"
+  grep -Fq "path: ${OCR_PREFIX}(/|$)(.*)" "${MANIFEST}" || fail "Manifest missing OCR API Ingress prefix ${OCR_PREFIX}"
+  grep -Fq "path: ${PLAYGROUND_PREFIX}(/|$)(.*)" "${MANIFEST}" || fail "Manifest missing playground Ingress prefix ${PLAYGROUND_PREFIX}"
+else
+  warn "Manifest file not found locally, skipping static manifest checks: ${MANIFEST}"
+fi
 
 log "Kubernetes context"
 kubectl config current-context || true

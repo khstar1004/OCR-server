@@ -20,6 +20,8 @@ const state = {
   editTarget: null,
   editImageData: null,
   removeManualImage: false,
+  editTableRows: [],
+  editMergeBlockIndices: [],
 };
 
 const linkedBlockKeys = new WeakMap();
@@ -104,9 +106,20 @@ const els = {
   editBlockEyebrow: document.getElementById("editBlockEyebrow"),
   editBlockTitle: document.getElementById("editBlockTitle"),
   editBlockLabel: document.getElementById("editBlockLabel"),
+  editTextField: document.getElementById("editTextField"),
   editBlockText: document.getElementById("editBlockText"),
   editTableField: document.getElementById("editTableField"),
   editTableText: document.getElementById("editTableText"),
+  editTableGrid: document.getElementById("editTableGrid"),
+  editTableAddRow: document.getElementById("editTableAddRow"),
+  editTableAddColumn: document.getElementById("editTableAddColumn"),
+  editTableRemoveRow: document.getElementById("editTableRemoveRow"),
+  editTableRemoveColumn: document.getElementById("editTableRemoveColumn"),
+  editMergeField: document.getElementById("editMergeField"),
+  editMergeList: document.getElementById("editMergeList"),
+  editMergeNextOne: document.getElementById("editMergeNextOne"),
+  editMergeNextThree: document.getElementById("editMergeNextThree"),
+  editMergeReset: document.getElementById("editMergeReset"),
   editImageField: document.getElementById("editImageField"),
   editImageDrop: document.getElementById("editImageDrop"),
   editImageInput: document.getElementById("editImageInput"),
@@ -755,6 +768,20 @@ function renderBlocks() {
     type.className = "block-type";
     type.textContent = `${blockLabelText(label)} ${index + 1}`;
     head.appendChild(type);
+
+    if (label !== "table") {
+      const tableButton = document.createElement("button");
+      tableButton.type = "button";
+      tableButton.className = "block-table-quick-button";
+      tableButton.textContent = "표";
+      tableButton.title = `${blockLabelText(label)} ${index + 1}을 표로 수정`;
+      tableButton.setAttribute("aria-label", tableButton.title);
+      tableButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        openBlockEditor({ pageIndex: state.pageIndex, blockIndex: index, preferredLabel: "table" });
+      });
+      head.appendChild(tableButton);
+    }
 
     const editButton = document.createElement("button");
     editButton.type = "button";
@@ -1460,30 +1487,36 @@ function ensureEditLabelOption(label) {
   els.editBlockLabel.appendChild(option);
 }
 
-function openBlockEditor({ pageIndex, blockIndex }) {
+function openBlockEditor({ pageIndex, blockIndex, preferredLabel = "" }) {
   const page = state.result?.pages?.[pageIndex];
   const block = page?.blocks?.[blockIndex];
   if (!page || !block || !els.blockEditModal) {
     return;
   }
   populateEditLabelOptions();
-  const label = String(block.label || "text").toLowerCase();
+  const label = String(preferredLabel || block.label || "text").toLowerCase();
   ensureEditLabelOption(label);
   state.editTarget = { pageIndex, blockIndex };
   state.editImageData = null;
   state.removeManualImage = false;
+  state.editMergeBlockIndices = [blockIndex];
   els.editBlockEyebrow.textContent = pageTitle(page);
   els.editBlockTitle.textContent = `${blockLabelText(label)} ${blockIndex + 1}`;
   els.editBlockLabel.value = label;
   els.editBlockText.value = String(block.text || "");
   const tableRows = tableRowsFromBlock(block);
-  els.editTableText.value = tableRows.length ? tableRowsToText(tableRows) : String(block.text || "");
+  setEditTableRows(tableRows.length ? tableRows : editableRowsFromTexts([String(block.text || "")]));
+  renderEditMergeList();
   setEditStatus("");
   const asset = findBlockAsset(page, block);
   setEditImagePreview(asset?.url || "");
-  syncEditDialogMode();
+  syncEditDialogMode({ refreshTableFromSelection: preferredLabel === "table" && !tableRows.length });
   els.blockEditModal.hidden = false;
-  els.editBlockText.focus();
+  if (label === "table") {
+    focusEditTableCell(0, 0);
+  } else {
+    els.editBlockText.focus();
+  }
 }
 
 function closeBlockEditor() {
@@ -1494,16 +1527,33 @@ function closeBlockEditor() {
   state.editTarget = null;
   state.editImageData = null;
   state.removeManualImage = false;
+  state.editTableRows = [];
+  state.editMergeBlockIndices = [];
   setEditStatus("");
   if (els.editImageInput) {
     els.editImageInput.value = "";
   }
 }
 
-function syncEditDialogMode() {
+function syncEditDialogMode({ refreshTableFromSelection = false } = {}) {
   const label = String(els.editBlockLabel?.value || "text").toLowerCase();
+  const isTable = label === "table";
+  if (els.editTextField) {
+    els.editTextField.hidden = isTable;
+  }
   if (els.editTableField) {
-    els.editTableField.hidden = label !== "table";
+    els.editTableField.hidden = !isTable;
+  }
+  if (els.editMergeField) {
+    els.editMergeField.hidden = !isTable;
+  }
+  if (isTable) {
+    renderEditMergeList();
+    if (refreshTableFromSelection) {
+      refreshEditTableFromMergeSelection();
+    } else {
+      renderEditTableGrid();
+    }
   }
 }
 
@@ -1521,6 +1571,216 @@ function tableRowsToText(rows) {
     .join("\n");
 }
 
+function editableRowsFromTexts(values) {
+  const text = (values || [])
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join("\n");
+  const parsed = parseTableTextRows(text);
+  if (parsed.length) {
+    return parsed;
+  }
+  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (lines.length >= 2 && lines.length % 2 === 0) {
+    const paired = [];
+    for (let index = 0; index < lines.length; index += 2) {
+      paired.push([lines[index], lines[index + 1]]);
+    }
+    return paired;
+  }
+  return lines.length ? lines.map((line) => [line, ""]) : [["", ""], ["", ""]];
+}
+
+function normalizeEditableTableRows(rows, minRows = 2, minCols = 2) {
+  const normalized = Array.isArray(rows)
+    ? rows.map((row) => (Array.isArray(row) ? row : [row]).map((cell) => String(cell || "")))
+    : [];
+  const columnCount = Math.max(minCols, ...normalized.map((row) => row.length), 0);
+  while (normalized.length < minRows) {
+    normalized.push([]);
+  }
+  return normalized.map((row) => {
+    const padded = row.slice(0, 80);
+    while (padded.length < columnCount) {
+      padded.push("");
+    }
+    return padded;
+  });
+}
+
+function setEditTableRows(rows) {
+  state.editTableRows = normalizeEditableTableRows(rows);
+  if (els.editTableText) {
+    els.editTableText.value = tableRowsToText(state.editTableRows);
+  }
+  renderEditTableGrid();
+}
+
+function renderEditTableGrid() {
+  if (!els.editTableGrid) {
+    return;
+  }
+  els.editTableGrid.replaceChildren();
+  const rows = normalizeEditableTableRows(state.editTableRows);
+  state.editTableRows = rows;
+  const table = document.createElement("table");
+  table.className = "edit-table";
+  rows.forEach((row, rowIndex) => {
+    const tr = document.createElement("tr");
+    row.forEach((cell, colIndex) => {
+      const td = document.createElement("td");
+      const input = document.createElement("textarea");
+      input.rows = 1;
+      input.value = cell;
+      input.dataset.row = String(rowIndex);
+      input.dataset.col = String(colIndex);
+      input.setAttribute("aria-label", `표 ${rowIndex + 1}행 ${colIndex + 1}열`);
+      input.addEventListener("input", () => {
+        updateEditTableCell(rowIndex, colIndex, input.value);
+      });
+      input.addEventListener("keydown", (event) => handleEditTableKeydown(event, rowIndex, colIndex));
+      input.addEventListener("paste", (event) => handleEditTablePaste(event, rowIndex, colIndex));
+      td.appendChild(input);
+      tr.appendChild(td);
+    });
+    table.appendChild(tr);
+  });
+  els.editTableGrid.appendChild(table);
+  if (els.editTableText) {
+    els.editTableText.value = tableRowsToText(rows);
+  }
+}
+
+function updateEditTableCell(rowIndex, colIndex, value) {
+  const rows = normalizeEditableTableRows(state.editTableRows);
+  if (!rows[rowIndex]) {
+    return;
+  }
+  rows[rowIndex][colIndex] = value;
+  state.editTableRows = rows;
+  if (els.editTableText) {
+    els.editTableText.value = tableRowsToText(rows);
+  }
+}
+
+function handleEditTableKeydown(event, rowIndex, colIndex) {
+  if (event.key !== "Tab" && event.key !== "Enter") {
+    return;
+  }
+  if (event.key === "Enter" && event.shiftKey) {
+    return;
+  }
+  event.preventDefault();
+  const rows = normalizeEditableTableRows(state.editTableRows);
+  const direction = event.shiftKey ? -1 : 1;
+  let nextRow = rowIndex;
+  let nextCol = colIndex + direction;
+  if (nextCol >= rows[0].length) {
+    nextCol = 0;
+    nextRow += 1;
+  } else if (nextCol < 0) {
+    nextRow -= 1;
+    nextCol = rows[0].length - 1;
+  }
+  if (nextRow >= rows.length) {
+    rows.push(new Array(rows[0].length).fill(""));
+    setEditTableRows(rows);
+  }
+  focusEditTableCell(Math.max(0, nextRow), Math.max(0, nextCol));
+}
+
+function handleEditTablePaste(event, rowIndex, colIndex) {
+  const text = event.clipboardData?.getData("text/plain") || "";
+  const matrix = parseClipboardTable(text);
+  if (!matrix.length || (matrix.length === 1 && matrix[0].length === 1)) {
+    return;
+  }
+  event.preventDefault();
+  const rows = normalizeEditableTableRows(state.editTableRows);
+  const requiredRows = rowIndex + matrix.length;
+  const requiredCols = colIndex + Math.max(...matrix.map((row) => row.length));
+  while (rows.length < requiredRows) {
+    rows.push(new Array(rows[0].length).fill(""));
+  }
+  rows.forEach((row) => {
+    while (row.length < requiredCols) {
+      row.push("");
+    }
+  });
+  matrix.forEach((row, pastedRowIndex) => {
+    row.forEach((cell, pastedColIndex) => {
+      rows[rowIndex + pastedRowIndex][colIndex + pastedColIndex] = cell;
+    });
+  });
+  setEditTableRows(rows);
+  focusEditTableCell(rowIndex, colIndex);
+}
+
+function parseClipboardTable(value) {
+  const text = String(value || "").replace(/\r\n?/g, "\n").trim();
+  if (!text) {
+    return [];
+  }
+  const rows = text.split("\n").map((line) => (
+    line.includes("\t")
+      ? line.split("\t").map((cell) => cell.trim())
+      : splitDelimitedTableLine(line)
+  ));
+  return rows.filter((row) => row.length);
+}
+
+function focusEditTableCell(rowIndex, colIndex) {
+  window.requestAnimationFrame(() => {
+    const input = els.editTableGrid?.querySelector(`[data-row="${rowIndex}"][data-col="${colIndex}"]`);
+    input?.focus();
+    input?.select?.();
+  });
+}
+
+function addEditTableRow() {
+  const rows = normalizeEditableTableRows(state.editTableRows);
+  rows.push(new Array(rows[0]?.length || 2).fill(""));
+  setEditTableRows(rows);
+  focusEditTableCell(rows.length - 1, 0);
+}
+
+function addEditTableColumn() {
+  const rows = normalizeEditableTableRows(state.editTableRows);
+  rows.forEach((row) => row.push(""));
+  setEditTableRows(rows);
+  focusEditTableCell(0, rows[0].length - 1);
+}
+
+function removeEditTableRow() {
+  const rows = normalizeEditableTableRows(state.editTableRows);
+  if (rows.length <= 1) {
+    setEditTableRows([new Array(rows[0]?.length || 2).fill("")]);
+    return;
+  }
+  rows.pop();
+  setEditTableRows(rows);
+}
+
+function removeEditTableColumn() {
+  const rows = normalizeEditableTableRows(state.editTableRows);
+  if ((rows[0]?.length || 0) <= 1) {
+    setEditTableRows(rows.map(() => [""]));
+    return;
+  }
+  rows.forEach((row) => row.pop());
+  setEditTableRows(rows);
+}
+
+function tableRowsFromEditor() {
+  if (!els.editTableGrid) {
+    return parseEditTableRows(els.editTableText?.value || "");
+  }
+  const rows = Array.from(els.editTableGrid.querySelectorAll("tr")).map((tr) => (
+    Array.from(tr.querySelectorAll("textarea")).map((input) => String(input.value || "").trim())
+  ));
+  return rows.filter((row) => row.some(Boolean));
+}
+
 function parseEditTableRows(value) {
   const rows = parseTableTextRows(value);
   if (rows.length) {
@@ -1531,6 +1791,97 @@ function parseEditTableRows(value) {
     .split("\n")
     .map((line) => line.split(/\t|,/).map((cell) => cell.trim()).filter(Boolean))
     .filter((row) => row.length > 1);
+}
+
+function editMergeCandidateBlocks() {
+  const target = state.editTarget;
+  const page = target ? state.result?.pages?.[target.pageIndex] : null;
+  const blocks = Array.isArray(page?.blocks) ? page.blocks : [];
+  if (!target || !blocks.length) {
+    return [];
+  }
+  return blocks
+    .map((block, index) => ({ block, index }))
+    .filter((item) => item.index >= target.blockIndex && item.index <= target.blockIndex + 12);
+}
+
+function renderEditMergeList() {
+  if (!els.editMergeList) {
+    return;
+  }
+  els.editMergeList.replaceChildren();
+  const target = state.editTarget;
+  const candidates = editMergeCandidateBlocks();
+  if (!target || !candidates.length) {
+    return;
+  }
+  const selected = new Set(state.editMergeBlockIndices.length ? state.editMergeBlockIndices : [target.blockIndex]);
+  candidates.forEach(({ block, index }) => {
+    const label = String(block.label || "text").toLowerCase();
+    const option = document.createElement("label");
+    option.className = `edit-merge-option ${label}`;
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = String(index);
+    checkbox.checked = index === target.blockIndex || selected.has(index);
+    checkbox.disabled = index === target.blockIndex;
+    checkbox.addEventListener("change", () => {
+      updateEditMergeSelectionFromDom();
+      refreshEditTableFromMergeSelection();
+    });
+    const strong = document.createElement("strong");
+    strong.textContent = `${blockLabelText(label)} ${index + 1}`;
+    const preview = document.createElement("span");
+    preview.textContent = blockDisplayText(block).replace(/\s+/g, " ").slice(0, 72);
+    option.append(checkbox, strong, preview);
+    els.editMergeList.appendChild(option);
+  });
+  state.editMergeBlockIndices = Array.from(selected).sort((a, b) => a - b);
+}
+
+function updateEditMergeSelectionFromDom() {
+  const target = state.editTarget;
+  if (!target || !els.editMergeList) {
+    return;
+  }
+  const selected = new Set([target.blockIndex]);
+  els.editMergeList.querySelectorAll("input[type='checkbox']").forEach((input) => {
+    if (input.checked) {
+      selected.add(Number(input.value));
+    }
+  });
+  state.editMergeBlockIndices = Array.from(selected).sort((a, b) => a - b);
+}
+
+function setEditMergeSelection(countAfterTarget) {
+  const target = state.editTarget;
+  if (!target) {
+    return;
+  }
+  const candidates = editMergeCandidateBlocks();
+  const selected = new Set([target.blockIndex]);
+  candidates.forEach(({ index }) => {
+    if (index > target.blockIndex && index <= target.blockIndex + countAfterTarget) {
+      selected.add(index);
+    }
+  });
+  state.editMergeBlockIndices = Array.from(selected).sort((a, b) => a - b);
+  renderEditMergeList();
+  refreshEditTableFromMergeSelection();
+}
+
+function refreshEditTableFromMergeSelection() {
+  const page = state.editTarget ? state.result?.pages?.[state.editTarget.pageIndex] : null;
+  const blocks = Array.isArray(page?.blocks) ? page.blocks : [];
+  const texts = state.editMergeBlockIndices
+    .map((index) => blocks[index])
+    .filter(Boolean)
+    .map((block) => String(block.text || ""));
+  const rows = editableRowsFromTexts(texts);
+  setEditTableRows(rows);
+  if (els.editBlockText) {
+    els.editBlockText.value = tableRowsToText(state.editTableRows);
+  }
 }
 
 async function saveBlockEdit(event) {
@@ -1545,11 +1896,15 @@ async function saveBlockEdit(event) {
   let text = els.editBlockText.value;
   const body = { label, text };
   if (label === "table") {
-    const tableRows = parseEditTableRows(els.editTableText.value);
+    const tableRows = tableRowsFromEditor();
     body.table_rows = tableRows;
     if (tableRows.length) {
       text = tableRowsToText(tableRows);
       body.text = text;
+    }
+    const mergeIndices = state.editMergeBlockIndices.length ? state.editMergeBlockIndices : [target.blockIndex];
+    if (mergeIndices.length > 1) {
+      body.merge_block_indices = mergeIndices;
     }
   }
   if (state.editImageData) {
@@ -2599,7 +2954,30 @@ if (els.blockEditModal) {
   });
 }
 if (els.editBlockLabel) {
-  els.editBlockLabel.addEventListener("change", syncEditDialogMode);
+  els.editBlockLabel.addEventListener("change", () => {
+    syncEditDialogMode({ refreshTableFromSelection: String(els.editBlockLabel.value || "").toLowerCase() === "table" });
+  });
+}
+if (els.editTableAddRow) {
+  els.editTableAddRow.addEventListener("click", addEditTableRow);
+}
+if (els.editTableAddColumn) {
+  els.editTableAddColumn.addEventListener("click", addEditTableColumn);
+}
+if (els.editTableRemoveRow) {
+  els.editTableRemoveRow.addEventListener("click", removeEditTableRow);
+}
+if (els.editTableRemoveColumn) {
+  els.editTableRemoveColumn.addEventListener("click", removeEditTableColumn);
+}
+if (els.editMergeNextOne) {
+  els.editMergeNextOne.addEventListener("click", () => setEditMergeSelection(1));
+}
+if (els.editMergeNextThree) {
+  els.editMergeNextThree.addEventListener("click", () => setEditMergeSelection(3));
+}
+if (els.editMergeReset) {
+  els.editMergeReset.addEventListener("click", () => setEditMergeSelection(0));
 }
 if (els.editImageDrop) {
   els.editImageDrop.addEventListener("click", () => els.editImageInput?.click());

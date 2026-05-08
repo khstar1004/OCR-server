@@ -2,6 +2,9 @@
 
 이 문서는 현재 저장소를 국방망 반입용 오프라인 Docker 번들로 만드는 기준을 정리한다.
 
+> 최신 `app + playground + ocr-service + vllm-ocr` 분리 번들은 `docs/defense_remote_ocr_bundle.md`와
+> `scripts/prepare_defense_remote_ocr_carry_in.ps1`를 우선 기준으로 사용한다. 이 문서는 용량/매체 산정용 보조 자료다.
+
 기준 시점:
 
 - 작업 기준일: 2026-04-03

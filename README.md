@@ -103,7 +103,7 @@ PDF를 [news_pdfs](C:\Users\USER\Desktop\a-cong-OCR-V2\news_pdfs)에 넣은 뒤 
 전송 연동값:
 
 - 데모 UI에서는 전달 URL을 직접 입력하지 않습니다. 작업 완료 후 기사 전송 대상은 `.env`의 `TARGET_API_BASE_URL` 값을 사용합니다.
-- 현재 기본값은 `TARGET_API_BASE_URL=http://121.153.7.193:8000/news` 입니다.
+- 기본값은 비워 둡니다. 국방망/현장 반입 시 승인된 내부망 주소를 `TARGET_API_BASE_URL=http://<내부-대상>:<PORT>/news` 형태로 설정합니다.
 - `TARGET_API_BASE_URL`에는 `/news`까지 포함한 전체 endpoint를 넣어도 되고, base host만 넣으면 app가 `/news`를 붙여 전송합니다.
 - 인증이 필요하면 `TARGET_API_TOKEN`, 타임아웃은 `TARGET_API_TIMEOUT_SEC` 를 사용합니다.
 - 운영 중에는 `target_api_base_url`, `target_api_timeout_sec`를 runtime settings로 저장하면 새 전송부터 반영됩니다.

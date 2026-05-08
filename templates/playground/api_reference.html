@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="ko">
 <head>
   <meta charset="utf-8">
@@ -152,7 +152,7 @@
           <table>
             <thead><tr><th>항목</th><th>값</th></tr></thead>
             <tbody>
-              <tr><td>Preview Base</td><td><code>http://14.50.225.33:18110</code></td></tr>
+              <tr><td>Preview Base</td><td><code>http://&lt;내부망-서버&gt;:18109</code></td></tr>
               <tr><td>API Prefix</td><td><code>/api/v1</code></td></tr>
               <tr><td>OpenAPI</td><td><code>/openapi.json</code></td></tr>
               <tr><td>인증</td><td>현재 preview는 별도 API key 없음. 운영 공개 시 reverse proxy 또는 gateway 인증 권장</td></tr>
@@ -222,11 +222,11 @@
             <div class="endpoint-bar"><span class="method get">GET</span><code>/playground/api/admin/runtime-settings</code></div>
             <div class="endpoint-bar"><span class="method put">PUT</span><code>/playground/api/admin/runtime-settings</code></div>
             <p>관리자 세션이 필요합니다. 이미지를 다시 만들지 않고 OCR upstream, timeout, 동시성, OCR prompt/batch, playground 제한, 국회 API/LLM/감시 주기 같은 운영값을 저장합니다. <code>restart_required</code>인 vLLM 실행 인자는 저장 후 vLLM만 재시작하면 반영됩니다.</p>
-            <pre><code>curl -c cookies.txt -X POST http://127.0.0.1:18110/playground/api/auth/login \
+            <pre><code>curl -c cookies.txt -X POST http://127.0.0.1:18109/playground/api/auth/login \
   -H "content-type: application/json" \
   -d "{\"username\":\"admin\",\"password\":\"&lt;admin-password&gt;\"}"
 
-curl -b cookies.txt -X PUT http://127.0.0.1:18110/playground/api/admin/runtime-settings \
+curl -b cookies.txt -X PUT http://127.0.0.1:18109/playground/api/admin/runtime-settings \
   -H "content-type: application/json" \
   -d "{\"values\":{\"ocr_service_timeout_sec\":300,\"target_api_timeout_sec\":60}}"</code></pre>
             <table>
@@ -254,7 +254,7 @@ curl -b cookies.txt -X PUT http://127.0.0.1:18110/playground/api/admin/runtime-s
                 <tr><td><code>include_raw</code></td><td><code>true</code></td><td>raw OCR payload 포함 여부</td></tr>
               </tbody>
             </table>
-            <pre><code>curl -X POST http://127.0.0.1:18110/api/v1/ocr/image \
+            <pre><code>curl -X POST http://127.0.0.1:18109/api/v1/ocr/image \
   -F "file=@page.png" \
   -F "page_number=1" \
   -F "include_raw=false"</code></pre>
@@ -275,7 +275,7 @@ curl -b cookies.txt -X PUT http://127.0.0.1:18110/playground/api/admin/runtime-s
                 <tr><td><code>include_raw</code></td><td><code>true</code></td><td>raw OCR payload 포함 여부</td></tr>
               </tbody>
             </table>
-            <pre><code>curl -X POST http://127.0.0.1:18110/api/v1/ocr/pdf \
+            <pre><code>curl -X POST http://127.0.0.1:18109/api/v1/ocr/pdf \
   -F "file=@sample.pdf" \
   -F "page_range=0-2" \
   -F "include_raw=false"</code></pre>
@@ -286,7 +286,7 @@ curl -b cookies.txt -X PUT http://127.0.0.1:18110/playground/api/admin/runtime-s
             <h2>비동기 OCR 요청</h2>
             <div class="endpoint-bar"><span class="method post">POST</span><code>/api/v1/ocr</code></div>
             <p>요청 ID를 먼저 받고, <code>GET /api/v1/ocr/{request_id}</code>로 결과를 조회합니다.</p>
-            <pre><code>curl -X POST http://127.0.0.1:18110/api/v1/ocr \
+            <pre><code>curl -X POST http://127.0.0.1:18109/api/v1/ocr \
   -F "file=@sample.pdf" \
   -F "page_range=0-1"</code></pre>
             <div class="endpoint-bar"><span class="method get">GET</span><code>/api/v1/ocr/{request_id}</code></div>
@@ -373,17 +373,17 @@ curl -b cookies.txt -X PUT http://127.0.0.1:18110/playground/api/admin/runtime-s
               </tbody>
             </table>
             <h3>직접 업로드</h3>
-            <pre><code>curl -X POST http://127.0.0.1:18110/api/v1/files \
+            <pre><code>curl -X POST http://127.0.0.1:18109/api/v1/files \
   -F "file=@sample.pdf"</code></pre>
             <h3>Upload slot 방식</h3>
-            <pre><code>curl -X POST http://127.0.0.1:18110/api/v1/files/request_upload_url \
+            <pre><code>curl -X POST http://127.0.0.1:18109/api/v1/files/request_upload_url \
   -H "content-type: application/json" \
   -d "{\"file_name\":\"sample.pdf\",\"content_type\":\"application/pdf\"}"
 
-curl -X PUT http://127.0.0.1:18110/api/v1/files/uploads/{upload_id} \
+curl -X PUT http://127.0.0.1:18109/api/v1/files/uploads/{upload_id} \
   --data-binary "@sample.pdf"
 
-curl http://127.0.0.1:18110/api/v1/files/uploads/{upload_id}/confirm</code></pre>
+curl http://127.0.0.1:18109/api/v1/files/uploads/{upload_id}/confirm</code></pre>
           </section>
 
           <section class="endpoint" id="workflows">
@@ -421,15 +421,15 @@ curl http://127.0.0.1:18110/api/v1/files/uploads/{upload_id}/confirm</code></pre
               </tbody>
             </table>
             <h3>파일에서 문서 변환까지</h3>
-            <pre><code>curl -X POST http://127.0.0.1:18110/api/v1/create_document \
+            <pre><code>curl -X POST http://127.0.0.1:18109/api/v1/create_document \
   -H "content-type: application/json" \
   -d "{\"file_id\":\"file_...\"}"
 
-curl -X POST http://127.0.0.1:18110/api/v1/convert_document \
+curl -X POST http://127.0.0.1:18109/api/v1/convert_document \
   -H "content-type: application/json" \
   -d "{\"document_id\":\"doc_...\",\"output_format\":\"json,markdown\"}"
 
-curl http://127.0.0.1:18110/api/v1/convert_document/{request_id}</code></pre>
+curl http://127.0.0.1:18109/api/v1/convert_document/{request_id}</code></pre>
           </section>
 
           <section class="endpoint" id="extraction">
@@ -448,11 +448,11 @@ curl http://127.0.0.1:18110/api/v1/convert_document/{request_id}</code></pre>
               </tbody>
             </table>
             <h3>Schema 생성 및 추출</h3>
-            <pre><code>curl -X POST http://127.0.0.1:18110/api/v1/generate_extraction_schemas \
+            <pre><code>curl -X POST http://127.0.0.1:18109/api/v1/generate_extraction_schemas \
   -H "content-type: application/json" \
   -d "{\"field_names\":[\"title\",\"summary\",\"document_date\"]}"
 
-curl -X POST http://127.0.0.1:18110/api/v1/extract_structured_data \
+curl -X POST http://127.0.0.1:18109/api/v1/extract_structured_data \
   -H "content-type: application/json" \
   -d "{\"document_id\":\"doc_...\",\"schema\":{\"name\":\"report\",\"fields\":[{\"name\":\"title\"}]}}"</code></pre>
           </section>
@@ -509,7 +509,7 @@ curl -X POST http://127.0.0.1:18110/api/v1/extract_structured_data \
                 <tr><td><code>DELETE</code></td><td><code>/api/v1/collections/{collection_id}/files/{file_id}</code></td><td>파일 제거</td></tr>
               </tbody>
             </table>
-            <pre><code>curl -X POST http://127.0.0.1:18110/api/v1/collections \
+            <pre><code>curl -X POST http://127.0.0.1:18109/api/v1/collections \
   -H "content-type: application/json" \
   -d "{\"name\":\"sample-set\",\"file_ids\":[\"file_...\"]}"</code></pre>
           </section>
@@ -527,7 +527,7 @@ curl -X POST http://127.0.0.1:18110/api/v1/extract_structured_data \
                 <tr><td><code>GET</code></td><td><code>/api/v1/batch_runs/{batch_run_id}/results</code></td><td>batch run 결과</td></tr>
               </tbody>
             </table>
-            <pre><code>curl -X POST http://127.0.0.1:18110/api/v1/batch_runs \
+            <pre><code>curl -X POST http://127.0.0.1:18109/api/v1/batch_runs \
   -H "content-type: application/json" \
   -d "{\"collection_id\":1,\"operation\":\"convert_document\",\"params\":{\"output_format\":\"json\"}}"</code></pre>
           </section>
@@ -586,7 +586,7 @@ curl -X POST http://127.0.0.1:18110/api/v1/extract_structured_data \
             <div class="code-card-title">Marker Convert</div>
             <pre><code>import requests
 
-base_url = "http://127.0.0.1:18110"
+base_url = "http://127.0.0.1:18109"
 
 with open("sample.pdf", "rb") as file:
     response = requests.post(
@@ -607,7 +607,7 @@ print(result.json())</code></pre>
             <div class="code-card-title">File to Document</div>
             <pre><code>import requests
 
-base_url = "http://127.0.0.1:18110"
+base_url = "http://127.0.0.1:18109"
 
 with open("sample.pdf", "rb") as file:
     file_res = requests.post(
@@ -640,7 +640,7 @@ extract_req = requests.post(
           <div class="code-card">
             <div class="code-card-title">Image-preserving ZIP</div>
             <pre><code>curl -o result.zip \
-  http://127.0.0.1:18110/playground/api/download/{request_id}</code></pre>
+  http://127.0.0.1:18109/playground/api/download/{request_id}</code></pre>
           </div>
         </aside>
       </main>
@@ -648,3 +648,4 @@ extract_req = requests.post(
   </div>
 </body>
 </html>
+

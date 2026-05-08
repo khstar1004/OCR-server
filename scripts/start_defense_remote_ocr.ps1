@@ -53,6 +53,33 @@ function Get-EnvValue {
     return $DefaultValue
 }
 
+function Assert-DefensePassword {
+    param([string]$Value)
+
+    $password = if ($null -eq $Value) { "" } else { $Value.Trim() }
+    $blocked = @("admin123!", "roqkfrhk1!", "CHANGE_ME_STRONG_ADMIN_PASSWORD", "CHANGE_ME", "")
+    if ($blocked -contains $password -or $password.StartsWith("CHANGE_ME", [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "PLAYGROUND_ADMIN_PASSWORD must be changed in .env before starting the defense-network stack."
+    }
+    if ($password.Length -lt 12) {
+        throw "PLAYGROUND_ADMIN_PASSWORD must be at least 12 characters for defense-network startup."
+    }
+}
+
+function Assert-NoKnownPublicEndpoint {
+    param(
+        [string]$Key,
+        [string]$Value
+    )
+
+    $endpoint = if ($null -eq $Value) { "" } else { $Value.Trim() }
+    foreach ($blocked in @("121.153.7.193", "14.50.225.74", "183.107.244.138")) {
+        if ($endpoint.Contains($blocked)) {
+            throw "$Key still points to a known public/test endpoint ($blocked). Clear it or replace it with the approved internal address in .env."
+        }
+    }
+}
+
 $resolvedComposeFile = Resolve-RepoPath -PathValue $ComposeFile
 $resolvedEnvTemplate = Resolve-RepoPath -PathValue $EnvTemplate
 $resolvedEnvFile = Join-Path $repoRoot ".env"
@@ -69,11 +96,28 @@ if (-not (Test-Path $resolvedEnvFile) -or $ForceEnvCopy) {
     Copy-Item $resolvedEnvTemplate $resolvedEnvFile -Force
 }
 
+$playgroundAdminPassword = Get-EnvValue -EnvFile $resolvedEnvFile -Key "PLAYGROUND_ADMIN_PASSWORD" -DefaultValue ""
+Assert-DefensePassword -Value $playgroundAdminPassword
+Assert-NoKnownPublicEndpoint -Key "TARGET_API_BASE_URL" -Value (Get-EnvValue -EnvFile $resolvedEnvFile -Key "TARGET_API_BASE_URL" -DefaultValue "")
+Assert-NoKnownPublicEndpoint -Key "LLM_BASE_URL" -Value (Get-EnvValue -EnvFile $resolvedEnvFile -Key "LLM_BASE_URL" -DefaultValue "")
+
 if (-not (Test-Path $resolvedModelDir)) {
     throw "Model directory not found: $resolvedModelDir"
 }
 
+$uiImageRef = Get-EnvValue -EnvFile $resolvedEnvFile -Key "UI_IMAGE" -DefaultValue "a-cong-ocr-ui:chandra"
+$ocrImageRef = Get-EnvValue -EnvFile $resolvedEnvFile -Key "OCR_IMAGE" -DefaultValue "a-cong-ocr:chandra"
 $vllmImageRef = Get-EnvValue -EnvFile $resolvedEnvFile -Key "VLLM_IMAGE" -DefaultValue "a-cong-vllm-openai:chandra"
+
+& $dockerPath image inspect $uiImageRef *> $null
+if ($LASTEXITCODE -ne 0) {
+    throw "UI image tag not found locally: $uiImageRef"
+}
+
+& $dockerPath image inspect $ocrImageRef *> $null
+if ($LASTEXITCODE -ne 0) {
+    throw "OCR image tag not found locally: $ocrImageRef"
+}
 
 & $dockerPath image inspect $vllmImageRef *> $null
 if ($LASTEXITCODE -ne 0) {

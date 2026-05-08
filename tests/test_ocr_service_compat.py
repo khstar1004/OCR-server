@@ -645,6 +645,111 @@ def test_playground_block_edits_persist_in_result_and_zip(tmp_path: Path, monkey
             assert "수도방위사령부" in html
 
 
+def test_playground_table_edit_can_merge_adjacent_text_blocks(tmp_path: Path, monkeypatch) -> None:
+    with _compat_client(tmp_path, monkeypatch) as client:
+        domain_types = importlib.import_module("app.domain.types")
+        image_path = tmp_path / "table-like-page.png"
+        image_path.write_bytes(_png_bytes())
+        compat = client.app.state.datalab_compat
+        request_id = compat.create_request(
+            "marker",
+            meta={"file_name": image_path.name, "playground": True},
+        )
+        page = domain_types.PageLayout(
+            page_number=1,
+            width=640,
+            height=480,
+            image_path=image_path,
+            blocks=[
+                domain_types.OCRBlock(
+                    block_id="cell-label-1",
+                    page_number=1,
+                    label=domain_types.BlockLabel.TEXT,
+                    bbox=[10, 10, 110, 28],
+                    text="창설일",
+                    confidence=0.9,
+                ),
+                domain_types.OCRBlock(
+                    block_id="cell-value-1",
+                    page_number=1,
+                    label=domain_types.BlockLabel.TEXT,
+                    bbox=[116, 10, 260, 28],
+                    text="1961년 6월 1일",
+                    confidence=0.9,
+                ),
+                domain_types.OCRBlock(
+                    block_id="cell-label-2",
+                    page_number=1,
+                    label=domain_types.BlockLabel.TEXT,
+                    bbox=[10, 34, 110, 52],
+                    text="상징명칭",
+                    confidence=0.9,
+                ),
+                domain_types.OCRBlock(
+                    block_id="cell-value-2",
+                    page_number=1,
+                    label=domain_types.BlockLabel.TEXT,
+                    bbox=[116, 34, 310, 52],
+                    text="충정대, 방패부대",
+                    confidence=0.9,
+                ),
+            ],
+            raw_vl={},
+            raw_structure={},
+            raw_fallback_ocr={},
+        )
+        result = compat._build_marker_result(
+            request_id,
+            image_path.name,
+            [page],
+            output_formats=["json", "markdown", "html", "chunks"],
+            mode="balanced",
+            max_pages=None,
+            page_range=None,
+            paginate=False,
+            add_block_ids=True,
+            include_markdown_in_chunks=True,
+            skip_cache=True,
+            extras="",
+            additional_config="{}",
+        )
+        compat._update_request_record(
+            request_id,
+            status="complete",
+            page_image_paths=[str(image_path)],
+            result=result,
+            error=None,
+        )
+
+        response = client.put(
+            f"/playground/api/convert/{request_id}/blocks/0/0",
+            json={
+                "label": "table",
+                "text": "",
+                "table_rows": [["창설일", "1961년 6월 1일"], ["상징명칭", "충정대, 방패부대"]],
+                "merge_block_indices": [0, 1, 2, 3],
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        blocks = payload["pages"][0]["blocks"]
+        assert len(blocks) == 1
+        table = blocks[0]
+        assert table["label"] == "table"
+        assert table["text"] == "창설일\t1961년 6월 1일\n상징명칭\t충정대, 방패부대"
+        assert table["bbox"] == [10.0, 10.0, 310.0, 52.0]
+        assert table["metadata"]["table_rows"] == [["창설일", "1961년 6월 1일"], ["상징명칭", "충정대, 방패부대"]]
+        assert table["metadata"]["playground_edit"]["merged_block_ids"] == [
+            "cell-label-1",
+            "cell-value-1",
+            "cell-label-2",
+            "cell-value-2",
+        ]
+        assert "1961년 6월 1일" in payload["views"]["markdown"]
+        assert "충정대, 방패부대" in payload["views"]["html"]
+
+
 def test_playground_defaults_to_all_pdf_pages_and_balanced_dpi(tmp_path: Path, monkeypatch) -> None:
     _install_fake_fitz(monkeypatch, page_count=3)
 

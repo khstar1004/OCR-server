@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+UI_TAR="${UI_TAR:-./dist/a-cong-ocr-ui_chandra.tar}"
 APP_TAR="${APP_TAR:-./dist/a-cong-ocr_chandra.tar}"
 VLLM_TAR="${VLLM_TAR:-./dist/a-cong-vllm-openai_chandra.tar}"
+UI_IMAGE_TAG="${UI_IMAGE_TAG:-a-cong-ocr-ui:chandra}"
+APP_IMAGE_TAG="${APP_IMAGE_TAG:-a-cong-ocr:chandra}"
 VLLM_IMAGE_TAG="${VLLM_IMAGE_TAG:-a-cong-vllm-openai:chandra}"
 SKIP_RUNTIME_VALIDATION="${SKIP_RUNTIME_VALIDATION:-0}"
 SKIP_GPU_RUNTIME_VALIDATION="${SKIP_GPU_RUNTIME_VALIDATION:-0}"
@@ -24,15 +27,22 @@ resolve_bundle_path() {
   fi
 }
 
+UI_TAR_PATH="$(resolve_bundle_path "${UI_TAR}")"
 APP_TAR_PATH="$(resolve_bundle_path "${APP_TAR}")"
 VLLM_TAR_PATH="$(resolve_bundle_path "${VLLM_TAR}")"
 MODEL_DIR_PATH="$(resolve_bundle_path "./news_models/chandra-ocr-2")"
+
+if [[ ! -f "${UI_TAR_PATH}" ]]; then
+  echo "UI image tar not found: ${UI_TAR_PATH}" >&2
+  exit 1
+fi
 
 if [[ ! -f "${APP_TAR_PATH}" ]]; then
   echo "App image tar not found: ${APP_TAR_PATH}" >&2
   exit 1
 fi
 
+"${DOCKER_BIN}" load -i "${UI_TAR_PATH}"
 "${DOCKER_BIN}" load -i "${APP_TAR_PATH}"
 
 if [[ -f "${VLLM_TAR_PATH}" ]]; then
@@ -43,6 +53,16 @@ else
 fi
 
 if [[ "${SKIP_RUNTIME_VALIDATION}" != "1" ]]; then
+  if ! docker_image_exists "${UI_IMAGE_TAG}"; then
+    echo "UI image tag not found after load: ${UI_IMAGE_TAG}" >&2
+    exit 1
+  fi
+
+  if ! docker_image_exists "${APP_IMAGE_TAG}"; then
+    echo "App image tag not found after load: ${APP_IMAGE_TAG}" >&2
+    exit 1
+  fi
+
   if ! docker_image_exists "${VLLM_IMAGE_TAG}"; then
     echo "vLLM image tag not found after load: ${VLLM_IMAGE_TAG}" >&2
     exit 1

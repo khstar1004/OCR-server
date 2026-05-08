@@ -14,6 +14,7 @@ OCR_API_TAR="${OCR_API_TAR:-dist/a-cong-ocr_chandra.tar}"
 UPDATE_VLLM_IMAGE="${UPDATE_VLLM_IMAGE:-0}"
 VLLM_IMAGE="${VLLM_IMAGE:-${REGISTRY}/${HARBOR_PROJECT}/a-cong-vllm-openai:chandra}"
 VLLM_TAR="${VLLM_TAR:-dist/a-cong-vllm-openai_chandra.tar}"
+SKIP_HARBOR_PUSH="${SKIP_HARBOR_PUSH:-0}"
 RESTART_APP="${RESTART_APP:-1}"
 RESTART_PLAYGROUND="${RESTART_PLAYGROUND:-1}"
 RESTART_OCR_SERVICE="${RESTART_OCR_SERVICE:-0}"
@@ -76,12 +77,12 @@ fi
 
 log "Loading UI image tar"
 docker load -i "${UI_TAR}"
-ensure_image_tag "${UI_IMAGE}" "a-cong-ocr-ui:chandra"
+ensure_image_tag "${UI_IMAGE}" "a-cong-ocr-ui:chandra" "a-cong-ocr:chandra-cssfix-20260429" "a-cong-ocr:chandra"
 
 if [[ "${UPDATE_OCR_API_IMAGE}" == "1" ]]; then
   log "Loading OCR API image tar"
   docker load -i "${OCR_API_TAR}"
-  ensure_image_tag "${OCR_API_IMAGE}" "a-cong-ocr:chandra"
+  ensure_image_tag "${OCR_API_IMAGE}" "a-cong-ocr:chandra" "a-cong-ocr:chandra-cssfix-20260429"
 fi
 
 if [[ "${UPDATE_VLLM_IMAGE}" == "1" ]]; then
@@ -90,13 +91,17 @@ if [[ "${UPDATE_VLLM_IMAGE}" == "1" ]]; then
   ensure_image_tag "${VLLM_IMAGE}" "a-cong-vllm-openai:chandra"
 fi
 
-log "Pushing image(s) to Harbor ${REGISTRY}"
-docker push "${UI_IMAGE}"
-if [[ "${UPDATE_OCR_API_IMAGE}" == "1" ]]; then
-  docker push "${OCR_API_IMAGE}"
-fi
-if [[ "${UPDATE_VLLM_IMAGE}" == "1" ]]; then
-  docker push "${VLLM_IMAGE}"
+if [[ "${SKIP_HARBOR_PUSH}" != "1" ]]; then
+  log "Pushing image(s) to Harbor ${REGISTRY}"
+  docker push "${UI_IMAGE}"
+  if [[ "${UPDATE_OCR_API_IMAGE}" == "1" ]]; then
+    docker push "${OCR_API_IMAGE}"
+  fi
+  if [[ "${UPDATE_VLLM_IMAGE}" == "1" ]]; then
+    docker push "${VLLM_IMAGE}"
+  fi
+else
+  log "Skipping Harbor push because SKIP_HARBOR_PUSH=1"
 fi
 
 log "Patching app and playground deployments to use ${UI_IMAGE}"

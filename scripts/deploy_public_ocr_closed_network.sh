@@ -6,11 +6,13 @@ HOST="${HOST:-nocodeaidev.army.mil}"
 PORT="${PORT:-20443}"
 HARBOR_PROJECT="${HARBOR_PROJECT:-nocodeaidev}"
 REGISTRY="${REGISTRY:-${HOST}:${PORT}}"
-UI_IMAGE="${UI_IMAGE:-${REGISTRY}/${HARBOR_PROJECT}/a-cong-ocr-ui:chandra}"
-OCR_API_IMAGE="${OCR_API_IMAGE:-${APP_IMAGE:-${REGISTRY}/${HARBOR_PROJECT}/a-cong-ocr:chandra}}"
+APP_UI_IMAGE="${APP_UI_IMAGE:-${REGISTRY}/${HARBOR_PROJECT}/a-cong-ocr-app-ui:chandra}"
+PLAYGROUND_IMAGE="${PLAYGROUND_IMAGE:-${REGISTRY}/${HARBOR_PROJECT}/a-cong-ocr-playground:chandra}"
+OCR_API_IMAGE="${OCR_API_IMAGE:-${APP_IMAGE:-${REGISTRY}/${HARBOR_PROJECT}/a-cong-ocr-api:chandra}}"
 VLLM_IMAGE="${VLLM_IMAGE:-${REGISTRY}/${HARBOR_PROJECT}/a-cong-vllm-openai:chandra}"
-UI_TAR="${UI_TAR:-dist/a-cong-ocr-ui_chandra.tar}"
-OCR_API_TAR="${OCR_API_TAR:-dist/a-cong-ocr_chandra.tar}"
+APP_UI_TAR="${APP_UI_TAR:-${UI_TAR:-dist/a-cong-ocr-app-ui_chandra.tar}}"
+PLAYGROUND_TAR="${PLAYGROUND_TAR:-dist/a-cong-ocr-playground_chandra.tar}"
+OCR_API_TAR="${OCR_API_TAR:-dist/a-cong-ocr-api_chandra.tar}"
 VLLM_TAR="${VLLM_TAR:-dist/a-cong-vllm-openai_chandra.tar}"
 IMAGE_PULL_SECRET="${IMAGE_PULL_SECRET:-harbor-reg-cred}"
 MANIFEST="${MANIFEST:-k8s/defense-remote-ocr.nocodeaidev.yaml}"
@@ -19,6 +21,7 @@ TARGET_API_BASE_URL="${TARGET_API_BASE_URL:-}"
 TARGET_API_TOKEN="${TARGET_API_TOKEN:-}"
 SKIP_HARBOR_PUSH="${SKIP_HARBOR_PUSH:-0}"
 SKIP_PREFLIGHT="${SKIP_PREFLIGHT:-0}"
+STAGE_MODEL_BEFORE_VLLM="${STAGE_MODEL_BEFORE_VLLM:-1}"
 
 log() {
   printf '\n[%s] %s\n' "$(date '+%H:%M:%S')" "$*"
@@ -68,7 +71,8 @@ require_cmd docker
 require_cmd kubectl
 require_cmd python3
 require_file "${MANIFEST}"
-require_file "${UI_TAR}"
+require_file "${APP_UI_TAR}"
+require_file "${PLAYGROUND_TAR}"
 require_file "${OCR_API_TAR}"
 require_file "${VLLM_TAR}"
 require_dir "${MODEL_SOURCE}"
@@ -86,6 +90,7 @@ if [[ "${SKIP_PREFLIGHT}" != "1" ]]; then
   EXPECTED_GPU_REQUEST="1" \
   EXPECTED_GPUMEM_PERCENTAGE="30" \
   EXPECTED_GPUCORES="30" \
+  MANIFEST="${MANIFEST}" \
   scripts/preflight_k8s_hami_public_ocr.sh
 else
   log "Skipping k8s/HAMi/Ingress preflight because SKIP_PREFLIGHT=1"
@@ -101,13 +106,15 @@ print({"model_type": cfg.get("model_type"), "architectures": cfg.get("architectu
 PY
 
 log "Loading image tar files"
-docker load -i "${UI_TAR}"
+docker load -i "${APP_UI_TAR}"
+docker load -i "${PLAYGROUND_TAR}"
 docker load -i "${OCR_API_TAR}"
 docker load -i "${VLLM_TAR}"
 
 log "Ensuring expected image tags exist"
-ensure_image_tag "${UI_IMAGE}" "a-cong-ocr-ui:chandra"
-ensure_image_tag "${OCR_API_IMAGE}" "a-cong-ocr:chandra"
+ensure_image_tag "${APP_UI_IMAGE}" "a-cong-ocr-app-ui:chandra" "a-cong-ocr-ui:chandra" "a-cong-ocr:chandra-cssfix-20260429"
+ensure_image_tag "${PLAYGROUND_IMAGE}" "a-cong-ocr-playground:chandra" "a-cong-ocr-ui:chandra" "a-cong-ocr:chandra-cssfix-20260429"
+ensure_image_tag "${OCR_API_IMAGE}" "a-cong-ocr-api:chandra" "a-cong-ocr:chandra" "a-cong-ocr:chandra-cssfix-20260429"
 ensure_image_tag "${VLLM_IMAGE}" "a-cong-vllm-openai:chandra"
 
 log "Validating vLLM image against the exact model folder"
@@ -115,7 +122,8 @@ scripts/validate_vllm_image_offline.sh "${VLLM_IMAGE}" "${MODEL_SOURCE}"
 
 if [[ "${SKIP_HARBOR_PUSH}" != "1" ]]; then
   log "Pushing images to Harbor ${REGISTRY}"
-  docker push "${UI_IMAGE}"
+  docker push "${APP_UI_IMAGE}"
+  docker push "${PLAYGROUND_IMAGE}"
   docker push "${OCR_API_IMAGE}"
   docker push "${VLLM_IMAGE}"
 else
@@ -124,26 +132,33 @@ fi
 
 log "Applying manifest"
 RENDERED_MANIFEST="$(mktemp /tmp/a-cong-ocr-manifest.XXXXXX.yaml)"
-python3 - "${MANIFEST}" "${RENDERED_MANIFEST}" "${UI_IMAGE}" "${OCR_API_IMAGE}" "${VLLM_IMAGE}" "${HOST}" "${NAMESPACE}" "${IMAGE_PULL_SECRET}" <<'PY'
+python3 - "${MANIFEST}" "${RENDERED_MANIFEST}" "${APP_UI_IMAGE}" "${PLAYGROUND_IMAGE}" "${OCR_API_IMAGE}" "${VLLM_IMAGE}" "${HOST}" "${NAMESPACE}" "${IMAGE_PULL_SECRET}" "${STAGE_MODEL_BEFORE_VLLM}" <<'PY'
+import re
 import sys
 from pathlib import Path
 
 src = Path(sys.argv[1])
 dst = Path(sys.argv[2])
-ui_image = sys.argv[3]
-ocr_api_image = sys.argv[4]
-vllm_image = sys.argv[5]
-host = sys.argv[6]
-namespace = sys.argv[7]
-image_pull_secret = sys.argv[8]
+app_ui_image = sys.argv[3]
+playground_image = sys.argv[4]
+ocr_api_image = sys.argv[5]
+vllm_image = sys.argv[6]
+host = sys.argv[7]
+namespace = sys.argv[8]
+image_pull_secret = sys.argv[9]
+stage_model_before_vllm = sys.argv[10] == "1"
 
 text = src.read_text(encoding="utf-8")
 text = text.replace(
-    "nocodeaidev.army.mil:20443/nocodeaidev/a-cong-ocr-ui:chandra",
-    ui_image,
+    "nocodeaidev.army.mil:20443/nocodeaidev/a-cong-ocr-app-ui:chandra",
+    app_ui_image,
 )
 text = text.replace(
-    "nocodeaidev.army.mil:20443/nocodeaidev/a-cong-ocr:chandra",
+    "nocodeaidev.army.mil:20443/nocodeaidev/a-cong-ocr-playground:chandra",
+    playground_image,
+)
+text = text.replace(
+    "nocodeaidev.army.mil:20443/nocodeaidev/a-cong-ocr-api:chandra",
     ocr_api_image,
 )
 text = text.replace(
@@ -153,6 +168,19 @@ text = text.replace(
 text = text.replace("host: nocodeaidev.army.mil", f"host: {host}")
 text = text.replace("namespace: nocodeaidev", f"namespace: {namespace}")
 text = text.replace("- name: harbor-reg-cred", f"- name: {image_pull_secret}")
+
+if stage_model_before_vllm:
+    rendered_docs = []
+    for doc in re.split(r"\n---\s*\n", text):
+        if re.search(r"^kind:\s*Deployment\s*$", doc, flags=re.MULTILINE) and re.search(
+            r"^  name:\s*a-cong-vllm-ocr\s*$",
+            doc,
+            flags=re.MULTILINE,
+        ):
+            doc = re.sub(r"(?m)^  replicas:\s*\d+\s*$", "  replicas: 0", doc, count=1)
+        rendered_docs.append(doc)
+    text = "\n---\n".join(rendered_docs)
+
 dst.write_text(text, encoding="utf-8")
 PY
 kubectl apply -f "${RENDERED_MANIFEST}"
@@ -160,7 +188,7 @@ kubectl -n "${NAMESPACE}" patch deploy/a-cong-vllm-ocr \
   --type merge \
   -p '{"spec":{"strategy":{"type":"Recreate"}}}'
 
-log "Pausing vLLM while replacing the model PVC contents"
+log "Keeping vLLM paused while replacing the model PVC contents"
 kubectl -n "${NAMESPACE}" scale deploy/a-cong-vllm-ocr --replicas=0
 kubectl -n "${NAMESPACE}" rollout status deploy/a-cong-vllm-ocr --timeout=300s
 
@@ -191,7 +219,7 @@ spec:
     - name: ${IMAGE_PULL_SECRET}
   containers:
     - name: loader
-      image: ${UI_IMAGE}
+      image: ${APP_UI_IMAGE}
       command: ["sleep", "86400"]
       resources:
         requests:

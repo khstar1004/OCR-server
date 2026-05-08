@@ -15,7 +15,7 @@ def normalize_root_path(value: str | None) -> str:
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore", populate_by_name=True)
 
     app_name: str = Field(default="news-ocr", alias="APP_NAME")
     app_env: str = Field(default="development", alias="APP_ENV")
@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     ocr_quality_min_korean_ratio: float = Field(default=0.35, alias="OCR_QUALITY_MIN_KOREAN_RATIO")
     poll_interval_sec: float = Field(default=1.0, alias="POLL_INTERVAL_SEC")
     stable_scan_count: int = Field(default=2, alias="STABLE_SCAN_COUNT")
-    llm_base_url: str | None = Field(default="http://183.107.244.138:8000/v1", alias="LLM_BASE_URL")
+    llm_base_url: str | None = Field(default=None, alias="LLM_BASE_URL")
     llm_model: str | None = Field(default="gpt-oss-20b", alias="LLM_MODEL")
     llm_api_key: str | None = Field(default=None, alias="LLM_API_KEY")
     llm_timeout_sec: float = Field(default=20.0, alias="LLM_TIMEOUT_SEC")
@@ -80,7 +80,7 @@ class Settings(BaseSettings):
     runtime_config_path: Path | None = Field(default=None, alias="RUNTIME_CONFIG_PATH")
     auth_store_path: Path | None = Field(default=None, alias="AUTH_STORE_PATH")
     playground_admin_username: str = Field(default="admin", alias="PLAYGROUND_ADMIN_USERNAME")
-    playground_admin_password: str = Field(default="roqkfrhk1!", alias="PLAYGROUND_ADMIN_PASSWORD")
+    playground_admin_password: str = Field(default="", alias="PLAYGROUND_ADMIN_PASSWORD")
     playground_admin_email: str = Field(default="admin@local", alias="PLAYGROUND_ADMIN_EMAIL")
     playground_session_days: int = Field(default=7, alias="PLAYGROUND_SESSION_DAYS")
 

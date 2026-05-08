@@ -1,4 +1,4 @@
-# OCR 빠른 체감 가이드
+﻿# OCR 빠른 체감 가이드
 
 이 저장소는 이제 `Chandra OCR`만 사용합니다. 가장 빨리 결과를 체감하는 방법은 PDF 또는 이미지 한 개를 넣고, 데모 UI에서 페이지 박스와 기사 결과를 같이 보는 방식입니다.
 
@@ -95,22 +95,22 @@ Chandra OCR 체험 UI는 `http://127.0.0.1:18109/playground/`에서 확인합니
 - 내부 런타임 검증은 Chandra 설정의 `model_type=qwen3_5`를 확인하지만, 별도 Qwen 전용 OCR을 띄우는 구조는 아닙니다.
 - `MODELS_DIR`는 `/models`로, `MODEL_CACHE_DIR`는 `/root/.cache/huggingface`로 마운트됩니다.
 
-인터넷망 준비 PC에서 이미 `18009` OCR API가 떠 있고 새 UI만 현재 코드로 체험하려면:
+준비 PC에서 이미 `18009` OCR API가 떠 있고 새 UI만 현재 코드로 체험하려면:
 
 ```powershell
-.\scripts\start_playground_preview.ps1 -Port 18110 -BindHost 0.0.0.0 -UpstreamOcrUrl http://127.0.0.1:18009
+.\scripts\start_playground_preview.ps1 -Port 18109 -BindHost 0.0.0.0 -UpstreamOcrUrl http://127.0.0.1:18009
 ```
 
 브라우저:
 
 ```text
-http://127.0.0.1:18110/playground/
+http://127.0.0.1:18109/playground/
 ```
 
-현재 인터넷망 미리보기는 아래 주소에서 확인합니다.
+현장 내부망 접속 주소는 서버 IP나 DNS로 바꿔 확인합니다.
 
 ```text
-http://14.50.225.33:18110/playground/
+http://<내부망-서버>:18109/playground/
 ```
 
 PowerShell 예시:
@@ -198,3 +198,4 @@ docker compose --profile remote-ocr up --build
 ### 같은 파일이 스킵되는 경우
 
 중복 해시 스킵이 있으므로 다시 돌릴 때는 `force_reprocess=true`를 같이 주는 편이 안전합니다.
+

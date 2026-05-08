@@ -72,12 +72,12 @@ kubectl -n "${NAMESPACE}" get svc/a-cong-vllm-ocr >/dev/null
 
 log "Loading UI image tar"
 docker load -i "${UI_TAR}"
-ensure_image_tag "${UI_IMAGE}" "a-cong-ocr-ui:chandra"
+ensure_image_tag "${UI_IMAGE}" "a-cong-ocr-ui:chandra" "a-cong-ocr:chandra-cssfix-20260429" "a-cong-ocr:chandra"
 
 if [[ "${UPDATE_OCR_API_IMAGE}" == "1" ]]; then
   log "Loading OCR API image tar"
   docker load -i "${OCR_API_TAR}"
-  ensure_image_tag "${OCR_API_IMAGE}" "a-cong-ocr:chandra"
+  ensure_image_tag "${OCR_API_IMAGE}" "a-cong-ocr:chandra" "a-cong-ocr:chandra-cssfix-20260429"
 fi
 
 if [[ "${SKIP_HARBOR_PUSH}" != "1" ]]; then
@@ -127,7 +127,7 @@ keep = {
     ("Ingress", "a-cong-ocr-playground"),
 }
 
-selected: list[str] = []
+selected = []
 for doc in re.split(r"\n---\s*\n", text):
     kind_match = re.search(r"^kind:\s*(\S+)\s*$", doc, flags=re.MULTILINE)
     name_match = re.search(r"^metadata:\s*\n(?:[^\n]*\n)*?\s+name:\s*(\S+)\s*$", doc, flags=re.MULTILINE)
