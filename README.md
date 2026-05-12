@@ -82,7 +82,8 @@ PDF를 [news_pdfs](C:\Users\USER\Desktop\a-cong-OCR-V2\news_pdfs)에 넣은 뒤 
 - 기본 설정은 루트 `.env`에서 관리합니다.
 - 운영 중 자주 바뀌는 값은 `RUNTIME_CONFIG_PATH`의 JSON 파일로 override할 수 있습니다. Docker/k8s 기본 경로는 `/data/runtime/runtime-config/settings.json`입니다.
 - `/playground/admin` 관리자 페이지 또는 관리자 세션을 가진 runtime settings API로 timeout, OCR upstream, Chandra prompt/batch, 업로드 제한, 국회 API/LLM/감시 주기 값을 이미지 재빌드 없이 바꿀 수 있습니다. vLLM launch 인자는 저장 후 vLLM 컨테이너만 재시작하면 entrypoint가 저장 JSON을 읽어 반영합니다.
-- 일반 사용자는 `/playground/login`에서 계정을 신청하고, 관리자가 `/playground/admin`에서 승인해야 로그인할 수 있습니다.
+- 일반 사용자는 `/playground/login`에서 계정을 신청하고, 관리자가 `/playground/admin`에서 승인해야 로그인할 수 있습니다. 비밀번호는 SHA-256 기반 PBKDF2 해시로 저장하며 30일 변경 주기, 90일 미접속 차단, 30분 무활동 세션 종료를 적용합니다.
+- 모든 API 호출은 `AUDIT_LOG_PATH` 또는 `AUTH_STORE_PATH` 옆 `audit/api_calls.jsonl`에 기록하고, 관리자 페이지의 접근 로그에서 조회/수동 백업할 수 있습니다. 로그는 주 단위로 자동 백업됩니다.
 - 새 환경에서는 `.env.example`을 `.env`로 복사한 뒤 `.env`만 수정하면 됩니다.
 
 핵심값:
@@ -93,6 +94,7 @@ PDF를 [news_pdfs](C:\Users\USER\Desktop\a-cong-OCR-V2\news_pdfs)에 넣은 뒤 
 - `OCR_SERVICE_TIMEOUT_SEC=300.0`
 - `RUNTIME_CONFIG_PATH=/data/runtime/runtime-config/settings.json` (Docker/k8s)
 - `AUTH_STORE_PATH=/data/runtime/runtime-config/auth.json` (Docker/k8s)
+- `AUDIT_LOG_PATH=/data/runtime/runtime-config/audit/api_calls.jsonl` (선택, 기본값은 `AUTH_STORE_PATH` 기준 자동 설정)
 - `PLAYGROUND_ADMIN_USERNAME=admin`, `PLAYGROUND_ADMIN_PASSWORD=...`
 - `CHANDRA_METHOD=hf`
 - `CHANDRA_MODEL_ID=datalab-to/chandra-ocr-2`

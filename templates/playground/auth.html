@@ -48,6 +48,7 @@
       <div class="auth-tabs" role="tablist">
         <button type="button" class="auth-tab active" data-auth-pane="loginPane">로그인</button>
         <button type="button" class="auth-tab" data-auth-pane="signupPane">계정 신청</button>
+        <button type="button" class="auth-tab" data-auth-pane="changePasswordPane">비밀번호 변경</button>
       </div>
 
       <form id="loginPane" class="auth-form">
@@ -74,18 +75,43 @@
           <input name="display_name" autocomplete="name" required>
         </label>
         <label>
+          <span>부서</span>
+          <input name="department" autocomplete="organization">
+        </label>
+        <label>
           <span>이메일</span>
           <input name="email" type="email" autocomplete="email">
         </label>
         <label>
           <span>비밀번호</span>
-          <input name="password" type="password" autocomplete="new-password" required minlength="8">
+          <input name="password" type="password" autocomplete="new-password" required minlength="9">
         </label>
         <label>
           <span>신청 사유</span>
           <textarea name="reason" rows="4" placeholder="소속, 사용 목적, 필요한 기능"></textarea>
         </label>
         <button type="submit" class="primary">신청하기</button>
+      </form>
+
+      <form id="changePasswordPane" class="auth-form" hidden>
+        <h2>비밀번호 변경</h2>
+        <label>
+          <span>아이디</span>
+          <input name="username" autocomplete="username" required>
+        </label>
+        <label>
+          <span>현재 비밀번호</span>
+          <input name="current_password" type="password" autocomplete="current-password" required>
+        </label>
+        <label>
+          <span>새 비밀번호</span>
+          <input name="new_password" type="password" autocomplete="new-password" required minlength="9">
+        </label>
+        <label>
+          <span>새 비밀번호 확인</span>
+          <input name="confirm_password" type="password" autocomplete="new-password" required minlength="9">
+        </label>
+        <button type="submit" class="primary">변경하기</button>
       </form>
       <p id="authStatusText" class="status-text"></p>
     </section>

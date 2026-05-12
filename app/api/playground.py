@@ -17,6 +17,7 @@ from PIL import Image, UnidentifiedImageError
 from app.core.config import get_settings
 from app.domain.types import SUPPORTED_BLOCK_LABELS, normalize_block_label_value
 from app.services.datalab_compat import DatalabCompatService, normalize_marker_mode, parse_page_range, utcnow_iso
+from app.services.audit_log import AuditLogStore
 from app.services.playground_export import (
     build_playground_export_zip,
     build_playground_partial_response_payload,
@@ -27,7 +28,13 @@ from app.services.playground_export import (
     render_playground_views,
 )
 from app.services.runtime_config import get_runtime_config_store, runtime_config_value
-from app.services.auth_store import AUTH_COOKIE_NAME, current_user_from_request, get_auth_store, require_admin_user
+from app.services.auth_store import (
+    AUTH_COOKIE_NAME,
+    current_user_from_request,
+    get_auth_store,
+    require_admin_user,
+    require_authenticated_user,
+)
 
 router = APIRouter(prefix="/playground", tags=["playground"])
 
@@ -53,6 +60,9 @@ PLAYGROUND_MODE_DPI_CAPS = {
 @router.get("", response_class=HTMLResponse, include_in_schema=False)
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
 def get_playground(request: Request) -> HTMLResponse:
+    user = current_user_from_request(request)
+    if not user:
+        return RedirectResponse(url=f"{_resource_prefixes(request)['playground']}/login", status_code=303)
     html = _PLAYGROUND_TEMPLATE.read_text(encoding="utf-8")
     html = html.replace("__PLAYGROUND_BASE__", _external_playground_base(request))
     links = _resource_links(request)
@@ -73,8 +83,10 @@ def get_playground(request: Request) -> HTMLResponse:
 @router.get("/login", response_class=HTMLResponse, include_in_schema=False)
 def get_playground_login(request: Request) -> HTMLResponse:
     user = current_user_from_request(request)
-    if user and user.get("role") == "admin":
-        return RedirectResponse(url=_resource_links(request)["admin"]["url"], status_code=303)
+    if user:
+        links = _resource_links(request)
+        destination = links["admin"]["url"] if user.get("role") == "admin" else links["playground"]["url"]
+        return RedirectResponse(url=destination, status_code=303)
     return _render_docs_template(request, _PLAYGROUND_AUTH_TEMPLATE.read_text(encoding="utf-8"))
 
 
@@ -220,6 +232,7 @@ async def signup_account(request: Request) -> dict[str, Any]:
             username=str(payload.get("username") or ""),
             password=str(payload.get("password") or ""),
             display_name=str(payload.get("display_name") or ""),
+            department=str(payload.get("department") or ""),
             email=str(payload.get("email") or ""),
             reason=str(payload.get("reason") or ""),
         )
@@ -252,6 +265,22 @@ async def login_account(request: Request) -> JSONResponse:
     return response
 
 
+@router.post("/api/auth/change-password")
+async def change_password(request: Request) -> dict[str, Any]:
+    payload = await _read_json_object(request)
+    try:
+        user = get_auth_store(get_settings()).change_password(
+            username=str(payload.get("username") or ""),
+            current_password=str(payload.get("current_password") or ""),
+            new_password=str(payload.get("new_password") or ""),
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from None
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+    return {"success": True, "user": user}
+
+
 @router.post("/api/auth/logout")
 def logout_account(request: Request) -> JSONResponse:
     get_auth_store(get_settings()).delete_session(request.cookies.get(AUTH_COOKIE_NAME))
@@ -282,6 +311,18 @@ def get_admin_overview(request: Request) -> dict[str, Any]:
         "health": get_playground_health(request),
         "capabilities": get_playground_capabilities(request),
     }
+
+
+@router.get("/api/admin/audit-logs")
+def list_admin_audit_logs(request: Request, limit: int = Query(default=200, ge=1, le=1000)) -> dict[str, Any]:
+    require_admin_user(request)
+    return AuditLogStore(get_settings()).read_entries(limit=limit)
+
+
+@router.post("/api/admin/audit-logs/backup")
+def backup_admin_audit_logs(request: Request) -> dict[str, Any]:
+    require_admin_user(request)
+    return AuditLogStore(get_settings()).force_backup()
 
 
 @router.post("/api/admin/users/{user_id}/approve")
@@ -352,9 +393,18 @@ def get_playground_history(
     request: Request,
     limit: int = Query(default=50, ge=1, le=200),
     playground_only: bool = Query(default=True),
+    include_all_users: bool = Query(default=False),
 ) -> dict[str, Any]:
+    user = require_authenticated_user(request)
     compat = _get_compat(request)
-    payload = compat.list_requests(limit=limit, playground_only=playground_only, request_kind="marker")
+    owner_user_id = None if user.get("role") == "admin" and include_all_users else str(user.get("id") or "")
+    payload = compat.list_requests(
+        limit=limit,
+        playground_only=playground_only,
+        request_kind="marker",
+        owner_user_id=owner_user_id,
+    )
+    payload["owner_scope"] = "all" if owner_user_id is None else "user"
     for item in payload.get("items", []):
         if not isinstance(item, dict):
             continue
@@ -409,8 +459,10 @@ async def start_playground_document_conversion(
     table_row_bboxes: bool = Form(default=False),
     disable_image_captions: bool = Form(default=False),
 ) -> dict[str, Any]:
+    user = require_authenticated_user(request)
     compat, request_id, process_kwargs = await _create_playground_marker_request(
         request,
+        user=user,
         file=file,
         file_0=file_0,
         file_url=file_url,
@@ -464,8 +516,10 @@ async def convert_playground_document(
     table_row_bboxes: bool = Form(default=False),
     disable_image_captions: bool = Form(default=False),
 ) -> dict[str, Any]:
+    user = require_authenticated_user(request)
     compat, request_id, process_kwargs = await _create_playground_marker_request(
         request,
+        user=user,
         file=file,
         file_0=file_0,
         file_url=file_url,
@@ -499,7 +553,10 @@ async def convert_playground_document(
 
 @router.get("/api/convert/{request_id}")
 def get_playground_conversion_result(request: Request, request_id: str) -> dict[str, Any]:
+    user = require_authenticated_user(request)
     compat = _get_compat(request)
+    record = _get_record(compat, request_id)
+    _assert_playground_record_access(record, user)
     return _playground_result_payload(compat, request_id)
 
 
@@ -510,9 +567,11 @@ async def update_playground_result_block(
     page_index: int,
     block_index: int,
 ) -> dict[str, Any]:
+    user = require_authenticated_user(request)
     payload = await _read_json_object(request)
     compat = _get_compat(request)
     record, result = _get_record_and_result(compat, request_id)
+    _assert_playground_record_access(record, user)
     updated_result, record_changes = _apply_playground_block_edit(
         compat=compat,
         request_id=request_id,
@@ -534,8 +593,10 @@ async def update_playground_result_block(
 
 @router.get("/api/images/{request_id}/{asset_name}")
 def get_playground_image(request: Request, request_id: str, asset_name: str) -> Response:
+    user = require_authenticated_user(request)
     compat = _get_compat(request)
     record, result = _get_record_and_result(compat, request_id)
+    _assert_playground_record_access(record, user)
     asset = find_playground_asset(record=record, result=result, asset_name=asset_name)
     if asset is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="image not found")
@@ -548,8 +609,10 @@ def get_playground_image(request: Request, request_id: str, asset_name: str) -> 
 
 @router.get("/api/download/{request_id}")
 def download_playground_result(request: Request, request_id: str) -> Response:
+    user = require_authenticated_user(request)
     compat = _get_compat(request)
     record, result = _get_record_and_result(compat, request_id)
+    _assert_playground_record_access(record, user)
     content = build_playground_export_zip(request_id=request_id, record=record, result=result)
     return Response(
         content=content,
@@ -992,6 +1055,13 @@ def _get_compat(request: Request) -> DatalabCompatService:
     return compat
 
 
+def _get_record(compat: DatalabCompatService, request_id: str) -> dict[str, Any]:
+    try:
+        return compat.get_request_record(request_id)
+    except KeyError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="request not found") from None
+
+
 def _get_record_and_result(compat: DatalabCompatService, request_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
     try:
         record = compat.get_request_record(request_id)
@@ -1003,9 +1073,29 @@ def _get_record_and_result(compat: DatalabCompatService, request_id: str) -> tup
     return record, result
 
 
+def _assert_playground_record_access(record: dict[str, Any], user: dict[str, Any]) -> None:
+    if user.get("role") == "admin":
+        return
+    meta = record.get("meta") if isinstance(record.get("meta"), dict) else {}
+    owner_user_id = str(meta.get("owner_user_id") or "")
+    current_user_id = str(user.get("id") or "")
+    if owner_user_id and current_user_id and owner_user_id == current_user_id:
+        return
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="request not found")
+
+
+def _playground_owner_meta(user: dict[str, Any]) -> dict[str, str]:
+    return {
+        "owner_user_id": str(user.get("id") or ""),
+        "owner_username": str(user.get("username") or ""),
+        "owner_display_name": str(user.get("display_name") or user.get("username") or ""),
+    }
+
+
 async def _create_playground_marker_request(
     request: Request,
     *,
+    user: dict[str, Any],
     file: UploadFile | None,
     file_0: UploadFile | None,
     file_url: str | None,
@@ -1058,6 +1148,7 @@ async def _create_playground_marker_request(
             "output_format": "json,markdown,html,chunks",
             "mode": normalized_mode,
             "playground": True,
+            **_playground_owner_meta(user),
         },
     )
     process_kwargs = {

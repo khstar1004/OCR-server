@@ -22,7 +22,11 @@ const state = {
   removeManualImage: false,
   editTableRows: [],
   editMergeBlockIndices: [],
+  currentUser: null,
 };
+
+const IDLE_LOGOUT_MS = 30 * 60 * 1000;
+let idleLogoutTimer = null;
 
 const linkedBlockKeys = new WeakMap();
 
@@ -96,6 +100,8 @@ const els = {
   copyButton: document.getElementById("copyButton"),
   downloadButton: document.getElementById("downloadButton"),
   updateSettingsButton: document.getElementById("updateSettingsButton"),
+  sessionUserPill: document.getElementById("sessionUserPill"),
+  logoutButton: document.getElementById("playgroundLogoutButton"),
   ocrRuntimeState: document.getElementById("ocrRuntimeState"),
   ocrConcurrencyState: document.getElementById("ocrConcurrencyState"),
   blockEditModal: document.getElementById("blockEditModal"),
@@ -142,6 +148,45 @@ function setResourceState(name, text, tone = "neutral") {
   node.dataset.tone = tone;
 }
 
+function redirectToLogin() {
+  window.location.href = "login";
+}
+
+async function loadCurrentUser() {
+  const response = await fetch("api/auth/me", { cache: "no-store" });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.authenticated || !payload.user) {
+    redirectToLogin();
+    return null;
+  }
+  state.currentUser = payload.user;
+  if (els.sessionUserPill) {
+    const name = payload.user.display_name || payload.user.username || "사용자";
+    const role = payload.user.role === "admin" ? "관리자" : "사용자";
+    els.sessionUserPill.textContent = `${name} · ${role}`;
+  }
+  return payload.user;
+}
+
+async function logoutPlayground() {
+  await fetch("api/auth/logout", { method: "POST" });
+  redirectToLogin();
+}
+
+function resetIdleLogoutTimer() {
+  if (idleLogoutTimer) {
+    window.clearTimeout(idleLogoutTimer);
+  }
+  idleLogoutTimer = window.setTimeout(logoutPlayground, IDLE_LOGOUT_MS);
+}
+
+function installIdleLogoutTimer() {
+  ["click", "keydown", "mousemove", "scroll", "touchstart"].forEach((eventName) => {
+    document.addEventListener(eventName, resetIdleLogoutTimer, { passive: true });
+  });
+  resetIdleLogoutTimer();
+}
+
 async function loadResources() {
   try {
     const response = await fetch("api/resources", { cache: "no-store" });
@@ -162,7 +207,7 @@ async function loadResources() {
     setResourceState("openapi", "열기", "neutral");
     setResourceState("api_capabilities", "정상", "ok");
     setResourceState("ocr_health", ready ? "정상" : "시작 중", ready ? "ok" : "warn");
-    setResourceState("admin", "로그인", "neutral");
+    setResourceState("admin", state.currentUser?.role === "admin" ? "관리자" : "권한 필요", state.currentUser?.role === "admin" ? "neutral" : "warn");
     applyRuntimeDefaults(payload.capabilities?.features || {});
     if (els.ocrRuntimeState) {
       els.ocrRuntimeState.textContent = ready ? "준비됨" : "시작 중";
@@ -3015,6 +3060,9 @@ if (els.editImageInput) {
 if (els.clearEditImage) {
   els.clearEditImage.addEventListener("click", clearEditImage);
 }
+if (els.logoutButton) {
+  els.logoutButton.addEventListener("click", logoutPlayground);
+}
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && els.blockEditModal && !els.blockEditModal.hidden) {
     closeBlockEditor();
@@ -3055,4 +3103,5 @@ els.toggleThumbs.addEventListener("click", () => {
 
 syncModeCards();
 populateEditLabelOptions();
-loadResources();
+installIdleLogoutTimer();
+loadCurrentUser().finally(loadResources);

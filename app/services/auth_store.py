@@ -20,6 +20,12 @@ from app.core.config import Settings, get_settings
 AUTH_COOKIE_NAME = "army_ocr_session"
 _USERNAME_RE = re.compile(r"^[a-zA-Z0-9_.@-]{3,64}$")
 _HASH_ITERATIONS = 260_000
+PASSWORD_MIN_LENGTH = 9
+PASSWORD_MAX_AGE_DAYS = 30
+INACTIVE_ACCOUNT_DAYS = 90
+SESSION_IDLE_TIMEOUT_MINUTES = 30
+_SPECIAL_RE = re.compile(r"[^A-Za-z0-9]")
+_REPEATED_CHAR_RE = re.compile(r"(.)\1{2,}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,11 +78,12 @@ class AuthStore:
         username: str,
         password: str,
         display_name: str = "",
+        department: str = "",
         email: str = "",
         reason: str = "",
     ) -> dict[str, Any]:
         username = self._normalize_username(username)
-        self._validate_password(password)
+        self._validate_password(password, username=username, display_name=display_name, department=department)
         now = _utc_now()
         with self._lock:
             payload = self._read_payload()
@@ -88,9 +95,11 @@ class AuthStore:
                 "id": user_id,
                 "username": username,
                 "display_name": str(display_name or username).strip()[:100],
+                "department": str(department or "").strip()[:100],
                 "email": str(email or "").strip()[:200],
                 "reason": str(reason or "").strip()[:1000],
                 "password_hash": self._hash_password(password),
+                "password_changed_at": now,
                 "role": "user",
                 "status": "pending",
                 "created_at": now,
@@ -109,9 +118,47 @@ class AuthStore:
                 raise ValueError("아이디 또는 비밀번호가 맞지 않습니다.")
             if user.get("status") != "active":
                 raise PermissionError("관리자 승인 후 로그인할 수 있습니다.")
+            now_dt = datetime.now(timezone.utc)
+            if self._is_inactive_account(user, now_dt):
+                self._block_inactive_user(payload, user)
+                self._write_payload(payload)
+                raise PermissionError("90일 이상 로그인되지 않아 계정이 차단됐습니다. 관리자에게 문의하세요.")
+            if self._is_password_expired(user, now_dt):
+                raise PermissionError("비밀번호 변경 주기가 지났습니다. 비밀번호를 변경한 뒤 로그인하세요.")
             now = _utc_now()
             user["last_login_at"] = now
             user["updated_at"] = now
+            self._write_payload(payload)
+            return self._public_user(user)
+
+    def change_password(self, *, username: str, current_password: str, new_password: str) -> dict[str, Any]:
+        username = self._normalize_username(username)
+        with self._lock:
+            payload = self._read_payload()
+            users = self._users(payload)
+            user = self._find_user_by_username(users, username)
+            if not user or not self._verify_password(current_password, str(user.get("password_hash") or "")):
+                raise ValueError("아이디 또는 현재 비밀번호가 맞지 않습니다.")
+            if user.get("status") != "active":
+                raise PermissionError("활성 계정만 비밀번호를 변경할 수 있습니다.")
+            now_dt = datetime.now(timezone.utc)
+            if self._is_inactive_account(user, now_dt):
+                self._block_inactive_user(payload, user)
+                self._write_payload(payload)
+                raise PermissionError("90일 이상 로그인되지 않아 계정이 차단됐습니다. 관리자에게 문의하세요.")
+            if self._verify_password(new_password, str(user.get("password_hash") or "")):
+                raise ValueError("새 비밀번호는 현재 비밀번호와 달라야 합니다.")
+            self._validate_password(
+                new_password,
+                username=str(user.get("username") or ""),
+                display_name=str(user.get("display_name") or ""),
+                department=str(user.get("department") or ""),
+            )
+            now = _utc_now()
+            user["password_hash"] = self._hash_password(new_password)
+            user["password_changed_at"] = now
+            user["updated_at"] = now
+            self._remove_user_sessions(self._sessions(payload), str(user.get("id") or ""))
             self._write_payload(payload)
             return self._public_user(user)
 
@@ -130,12 +177,13 @@ class AuthStore:
                 "id": session_id,
                 "user_id": user_id,
                 "created_at": _utc_now(),
+                "last_seen_at": _utc_now(),
                 "expires_at": expires_at,
             }
             self._write_payload(payload)
             return AuthSession(session_id=session_id, user=self._public_user(user), expires_at=expires_at)
 
-    def user_for_session(self, session_id: str | None) -> dict[str, Any] | None:
+    def user_for_session(self, session_id: str | None, *, touch: bool = True) -> dict[str, Any] | None:
         if not session_id:
             return None
         now = datetime.now(timezone.utc)
@@ -150,12 +198,29 @@ class AuthStore:
                 sessions.pop(session_id, None)
                 self._write_payload(payload)
                 return None
+            last_seen_at = _parse_dt(session.get("last_seen_at") or session.get("created_at"))
+            if last_seen_at is None or now - last_seen_at > self._session_idle_timeout():
+                sessions.pop(session_id, None)
+                self._write_payload(payload)
+                return None
             users = self._users(payload)
             user = users.get(str(session.get("user_id") or ""))
             if not user or user.get("status") != "active":
                 sessions.pop(session_id, None)
                 self._write_payload(payload)
                 return None
+            if self._is_inactive_account(user, now):
+                self._block_inactive_user(payload, user)
+                sessions.pop(session_id, None)
+                self._write_payload(payload)
+                return None
+            if self._is_password_expired(user, now):
+                sessions.pop(session_id, None)
+                self._write_payload(payload)
+                return None
+            if touch:
+                session["last_seen_at"] = now.isoformat()
+                self._write_payload(payload)
             return self._public_user(user)
 
     def delete_session(self, session_id: str | None) -> None:
@@ -262,11 +327,12 @@ class AuthStore:
                 str(getattr(self.settings, "playground_admin_username", None) or os.getenv("PLAYGROUND_ADMIN_USERNAME") or "admin")
             )
             password = self._bootstrap_admin_password()
+            self._validate_password(password, username=username, display_name="관리자", department="")
             email = str(getattr(self.settings, "playground_admin_email", None) or os.getenv("PLAYGROUND_ADMIN_EMAIL") or "admin@local")
 
             existing = self._find_user_by_username(users, username)
             if existing and existing.get("role") == "admin":
-                if self._sync_bootstrap_admin(existing, password=password, email=email, payload=payload):
+                if self._sync_bootstrap_admin(existing, password=password, email=email, payload=payload, force=True):
                     self._write_payload(payload)
                 return
 
@@ -279,9 +345,11 @@ class AuthStore:
                 "id": user_id,
                 "username": username,
                 "display_name": "관리자",
+                "department": "운영",
                 "email": email,
                 "reason": "bootstrap admin",
                 "password_hash": self._hash_password(password),
+                "password_changed_at": now,
                 "role": "admin",
                 "status": "active",
                 "created_at": now,
@@ -298,7 +366,7 @@ class AuthStore:
             raw_value = os.getenv("PLAYGROUND_ADMIN_PASSWORD")
         password = str(raw_value or "").strip()
         if not self._requires_explicit_admin_password():
-            return password or "roqkfrhk1!"
+            return password or "Roqkfrhk1!"
         if self._is_blocked_bootstrap_password(password):
             raise RuntimeError(
                 "PLAYGROUND_ADMIN_PASSWORD must be set to a site-specific value before starting in docker/k8s/production mode."
@@ -314,7 +382,13 @@ class AuthStore:
     @staticmethod
     def _is_blocked_bootstrap_password(password: str) -> bool:
         value = str(password or "").strip()
-        return value in {"", "admin123!", "roqkfrhk1!", "CHANGE_ME_STRONG_ADMIN_PASSWORD"} or value.upper().startswith("CHANGE_ME")
+        return value in {
+            "",
+            "admin123!",
+            "roqkfrhk1!",
+            "Roqkfrhk1!",
+            "CHANGE_ME_STRONG_ADMIN_PASSWORD",
+        } or value.upper().startswith("CHANGE_ME")
 
     def _sync_bootstrap_admin(
         self,
@@ -323,11 +397,15 @@ class AuthStore:
         password: str,
         email: str,
         payload: dict[str, Any],
+        force: bool = False,
     ) -> bool:
-        if not user.get("bootstrap"):
+        if not force and not user.get("bootstrap"):
             return False
         changed = False
         now = _utc_now()
+        if force and not user.get("bootstrap"):
+            user["bootstrap"] = True
+            changed = True
         if user.get("status") != "active":
             user["status"] = "active"
             changed = True
@@ -337,7 +415,11 @@ class AuthStore:
         if not self._verify_password(password, str(user.get("password_hash") or "")):
             user["password_hash"] = self._hash_password(password)
             user["password_synced_at"] = now
+            user["password_changed_at"] = now
             self._remove_user_sessions(self._sessions(payload), str(user.get("id") or ""))
+            changed = True
+        if not user.get("password_changed_at"):
+            user["password_changed_at"] = now
             changed = True
         if changed:
             user["updated_at"] = now
@@ -397,10 +479,13 @@ class AuthStore:
             "id": user.get("id"),
             "username": user.get("username"),
             "display_name": user.get("display_name") or user.get("username"),
+            "department": user.get("department") or "",
             "email": user.get("email") or "",
             "reason": user.get("reason") or "",
             "role": user.get("role") or "user",
             "status": user.get("status") or "pending",
+            "password_changed_at": user.get("password_changed_at"),
+            "password_expires_at": _password_expires_at(user),
             "created_at": user.get("created_at"),
             "updated_at": user.get("updated_at"),
             "approved_at": user.get("approved_at"),
@@ -423,9 +508,32 @@ class AuthStore:
         return cleaned
 
     @staticmethod
-    def _validate_password(password: str) -> None:
-        if len(str(password or "")) < 8:
-            raise ValueError("비밀번호는 8자 이상이어야 합니다.")
+    def _validate_password(
+        password: str,
+        *,
+        username: str = "",
+        display_name: str = "",
+        department: str = "",
+    ) -> None:
+        value = str(password or "")
+        if len(value) < PASSWORD_MIN_LENGTH:
+            raise ValueError("비밀번호는 9자 이상이어야 합니다.")
+        if not any(char.islower() for char in value):
+            raise ValueError("비밀번호에는 영문 소문자가 1개 이상 필요합니다.")
+        if not any(char.isupper() for char in value):
+            raise ValueError("비밀번호에는 영문 대문자가 1개 이상 필요합니다.")
+        if not any(char.isdigit() for char in value):
+            raise ValueError("비밀번호에는 숫자가 1개 이상 필요합니다.")
+        if not _SPECIAL_RE.search(value):
+            raise ValueError("비밀번호에는 특수문자가 1개 이상 필요합니다.")
+        if _REPEATED_CHAR_RE.search(value):
+            raise ValueError("동일 문자를 3회 이상 연속으로 사용할 수 없습니다.")
+        if _has_sequential_digits(value):
+            raise ValueError("연속 숫자의 오름차순/내림차순 3자리 이상은 사용할 수 없습니다.")
+        lowered = value.casefold()
+        for token in _password_forbidden_tokens(username=username, display_name=display_name, department=department):
+            if token and token in lowered:
+                raise ValueError("비밀번호에는 아이디, 이름, 부서명을 포함할 수 없습니다.")
 
     @staticmethod
     def _hash_password(password: str) -> str:
@@ -457,6 +565,42 @@ class AuthStore:
         except (TypeError, ValueError):
             return 7
 
+    @staticmethod
+    def _session_idle_timeout() -> timedelta:
+        return timedelta(minutes=SESSION_IDLE_TIMEOUT_MINUTES)
+
+    @staticmethod
+    def _is_password_expired(user: dict[str, Any], now: datetime) -> bool:
+        changed_at = _parse_dt(user.get("password_changed_at")) or _parse_dt(user.get("created_at"))
+        if changed_at is None:
+            return True
+        return now - changed_at >= timedelta(days=PASSWORD_MAX_AGE_DAYS)
+
+    @staticmethod
+    def _is_inactive_account(user: dict[str, Any], now: datetime) -> bool:
+        if user.get("status") != "active":
+            return False
+        last_login_at = _parse_dt(user.get("last_login_at"))
+        reactivated_at = _parse_dt(user.get("reactivated_at"))
+        if reactivated_at is not None and (last_login_at is None or reactivated_at > last_login_at):
+            reference = reactivated_at
+        elif last_login_at is not None:
+            reference = last_login_at
+        else:
+            reference = _parse_dt(user.get("approved_at")) or _parse_dt(user.get("created_at"))
+        if reference is None:
+            return False
+        return now - reference >= timedelta(days=INACTIVE_ACCOUNT_DAYS)
+
+    def _block_inactive_user(self, payload: dict[str, Any], user: dict[str, Any]) -> None:
+        now = _utc_now()
+        user["status"] = "suspended"
+        user["suspended_at"] = now
+        user["suspended_by"] = "system"
+        user["suspended_reason"] = "inactive_90_days"
+        user["updated_at"] = now
+        self._remove_user_sessions(self._sessions(payload), str(user.get("id") or ""))
+
 
 def get_auth_store(settings: Settings | None = None) -> AuthStore:
     return AuthStore(settings)
@@ -482,6 +626,39 @@ def require_admin_user(request: Request) -> dict[str, Any]:
 
 def status_sort_key(value: str) -> int:
     return {"pending": 0, "active": 1, "suspended": 2, "rejected": 3}.get(value, 9)
+
+
+def _password_forbidden_tokens(*, username: str, display_name: str, department: str) -> list[str]:
+    tokens: list[str] = []
+    for value in (username, display_name, department):
+        cleaned = str(value or "").strip().casefold()
+        if len(cleaned) >= 2:
+            tokens.append(cleaned)
+        if "@" in cleaned:
+            local_part = cleaned.split("@", 1)[0]
+            if len(local_part) >= 2:
+                tokens.append(local_part)
+    return list(dict.fromkeys(tokens))
+
+
+def _has_sequential_digits(value: str) -> bool:
+    for index in range(0, max(len(value) - 2, 0)):
+        chunk = value[index : index + 3]
+        if not chunk.isdigit():
+            continue
+        digits = [int(char) for char in chunk]
+        if digits[1] == digits[0] + 1 and digits[2] == digits[1] + 1:
+            return True
+        if digits[1] == digits[0] - 1 and digits[2] == digits[1] - 1:
+            return True
+    return False
+
+
+def _password_expires_at(user: dict[str, Any]) -> str | None:
+    changed_at = _parse_dt(user.get("password_changed_at")) or _parse_dt(user.get("created_at"))
+    if changed_at is None:
+        return None
+    return (changed_at + timedelta(days=PASSWORD_MAX_AGE_DAYS)).isoformat()
 
 
 def _utc_now() -> str:

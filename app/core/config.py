@@ -79,6 +79,8 @@ class Settings(BaseSettings):
     playground_max_upload_mb: int = Field(default=512, alias="PLAYGROUND_MAX_UPLOAD_MB")
     runtime_config_path: Path | None = Field(default=None, alias="RUNTIME_CONFIG_PATH")
     auth_store_path: Path | None = Field(default=None, alias="AUTH_STORE_PATH")
+    audit_log_path: Path | None = Field(default=None, alias="AUDIT_LOG_PATH")
+    audit_backup_dir: Path | None = Field(default=None, alias="AUDIT_BACKUP_DIR")
     playground_admin_username: str = Field(default="admin", alias="PLAYGROUND_ADMIN_USERNAME")
     playground_admin_password: str = Field(default="", alias="PLAYGROUND_ADMIN_PASSWORD")
     playground_admin_email: str = Field(default="admin@local", alias="PLAYGROUND_ADMIN_EMAIL")

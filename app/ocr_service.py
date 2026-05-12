@@ -23,6 +23,7 @@ from app.services.datalab_compat import (
     normalize_marker_output_formats,
     parse_page_range,
 )
+from app.services.audit_log import install_audit_logging
 from app.services.datalab_defense import DefenseDataService
 from app.services.ocr_engine import OCREngine
 from app.services.runtime_config import get_runtime_config_store, runtime_config_value
@@ -1107,6 +1108,7 @@ def create_app() -> FastAPI:
         root_path=settings.normalized_root_path,
         lifespan=lifespan,
     )
+    install_audit_logging(app, service_name="ocr-service")
     app.include_router(router)
     app.include_router(compat_router)
     app.include_router(playground_router)

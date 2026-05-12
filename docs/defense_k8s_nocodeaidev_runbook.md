@@ -15,7 +15,7 @@
 - 외부 OCR playground URL: `https://nocodeaidev.army.mil:20443/a-cong-ocr-playground/`
 - 기본 `OCR_MAX_CONCURRENT_REQUESTS=1`입니다. 단일 vLLM/GPU 구성에서는 2-5명이 동시에 요청해도 추론 호출은 큐잉되고, 각 요청 결과는 `request_id`별 디렉터리에 분리 저장됩니다.
 - 자주 바뀌는 timeout, playground 제한, 국회 API 전송 주소는 `RUNTIME_CONFIG_PATH=/data/runtime/runtime-config/settings.json`에 저장합니다. 이 파일은 runtime PVC에 있으므로 app/OCR API/playground가 같이 읽고, 컨테이너 이미지 재빌드 없이 새 요청부터 반영됩니다.
-- playground 계정/세션은 `AUTH_STORE_PATH=/data/runtime/runtime-config/auth.json`에 저장합니다. 일반 사용자는 계정 신청 후 관리자 승인 상태가 되어야 로그인할 수 있습니다.
+- playground 계정/세션은 `AUTH_STORE_PATH=/data/runtime/runtime-config/auth.json`에 저장합니다. 일반 사용자는 계정 신청 후 관리자 승인 상태가 되어야 로그인할 수 있고, 비밀번호 30일 변경 주기/90일 미접속 차단/30분 무활동 로그아웃이 적용됩니다. API 접근 로그는 같은 runtime PVC의 `audit/api_calls.jsonl`에 저장되고 주 단위로 백업됩니다.
 - k8s Ingress YAML에는 `:20443`을 쓰지 않습니다. `host: nocodeaidev.army.mil`과 `path`만 씁니다.
 
 공개 API 예시:

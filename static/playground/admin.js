@@ -8,6 +8,8 @@ const adminState = {
   settingsGroupFilter: "all",
   restartOnly: false,
   overrideOnly: false,
+  auditLogsLoaded: false,
+  auditLogs: [],
 };
 
 const adminEls = {
@@ -48,6 +50,12 @@ const adminEls = {
   settingsGroupFilter: document.getElementById("settingsGroupFilter"),
   restartOnlyToggle: document.getElementById("restartOnlyToggle"),
   overrideOnlyToggle: document.getElementById("overrideOnlyToggle"),
+  reloadAuditLogs: document.getElementById("reloadAuditLogs"),
+  backupAuditLogs: document.getElementById("backupAuditLogs"),
+  auditLogLimit: document.getElementById("auditLogLimit"),
+  auditLogList: document.getElementById("auditLogList"),
+  auditBackupList: document.getElementById("auditBackupList"),
+  auditLogStatus: document.getElementById("auditLogStatus"),
   logoutButton: document.getElementById("logoutButton"),
 };
 
@@ -103,11 +111,14 @@ function showAdminPane(id) {
   if (id === "settingsPane" && !adminState.settingsLoaded) {
     loadRuntimeSettings();
   }
+  if (id === "auditPane" && !adminState.auditLogsLoaded) {
+    loadAuditLogs();
+  }
 }
 
 async function refreshAll() {
   setAdminStatus("전체 상태를 새로고침 중입니다...");
-  await Promise.all([loadOverview(), loadUsers(), loadRuntimeSettings()]);
+  await Promise.all([loadOverview(), loadUsers(), loadRuntimeSettings(), loadAuditLogs()]);
   setAdminStatus("새로고침했습니다.");
 }
 
@@ -209,7 +220,7 @@ function filteredUsers() {
     if (!query) {
       return true;
     }
-    return [user.username, user.display_name, user.email, user.reason, user.role, statusLabel(user.status)]
+    return [user.username, user.display_name, user.department, user.email, user.reason, user.role, statusLabel(user.status)]
       .join(" ")
       .toLowerCase()
       .includes(query);
@@ -253,6 +264,7 @@ function userRow(user) {
 
   const meta = document.createElement("span");
   meta.textContent = [
+    user.department,
     user.email,
     roleLabel(user.role),
     `신청 ${formatTime(user.created_at) || "-"}`,
@@ -399,7 +411,10 @@ function runtimeSettingField(spec) {
       input.max = String(spec.max);
     }
   } else {
-    input.type = "text";
+    input.type = isSensitiveSetting(spec) ? "password" : "text";
+    if (isSensitiveSetting(spec)) {
+      input.autocomplete = "off";
+    }
   }
   if (spec.type !== "bool") {
     input.value = stringifySettingValue(spec.value);
@@ -420,6 +435,11 @@ function runtimeSettingField(spec) {
   detail.textContent = `${spec.description || ""} · ${spec.env || spec.key}`;
   label.appendChild(detail);
   return label;
+}
+
+function isSensitiveSetting(spec) {
+  const text = [spec.key, spec.env, spec.label, spec.description].join(" ").toLowerCase();
+  return ["password", "passwd", "token", "api_key", "apikey", "secret"].some((item) => text.includes(item));
 }
 
 function settingBadge(text, type) {
@@ -560,6 +580,153 @@ async function logout() {
   window.location.href = "login";
 }
 
+function setAuditStatus(text, isError = false) {
+  if (!adminEls.auditLogStatus) {
+    return;
+  }
+  adminEls.auditLogStatus.textContent = text;
+  adminEls.auditLogStatus.classList.toggle("error", isError);
+}
+
+async function loadAuditLogs() {
+  if (!adminEls.auditLogList) {
+    return;
+  }
+  setAuditStatus("로그를 불러오는 중입니다...");
+  try {
+    const limit = adminEls.auditLogLimit?.value || "200";
+    const payload = await requestJson(`api/admin/audit-logs?limit=${encodeURIComponent(limit)}`);
+    if (!payload) {
+      return;
+    }
+    adminState.auditLogs = payload.entries || [];
+    adminState.auditLogsLoaded = true;
+    renderAuditLogs(payload);
+    setAuditStatus(`${adminState.auditLogs.length}개 로그를 표시합니다.`);
+  } catch (error) {
+    adminState.auditLogsLoaded = false;
+    adminState.auditLogs = [];
+    renderAuditLogs({ entries: [], local: {}, upstream: {} });
+    setAuditStatus(error.message || "로그를 불러오지 못했습니다.", true);
+  }
+}
+
+function renderAuditLogs(payload) {
+  renderAuditBackups(payload);
+  adminEls.auditLogList.replaceChildren();
+  const entries = payload.entries || [];
+  if (!entries.length) {
+    const empty = document.createElement("p");
+    empty.className = "history-empty";
+    empty.textContent = "표시할 로그가 없습니다.";
+    adminEls.auditLogList.appendChild(empty);
+    return;
+  }
+  entries.forEach((entry) => {
+    adminEls.auditLogList.appendChild(auditLogRow(entry));
+  });
+}
+
+function renderAuditBackups(payload) {
+  if (!adminEls.auditBackupList) {
+    return;
+  }
+  adminEls.auditBackupList.replaceChildren();
+  const local = payload.local || {};
+  const upstream = payload.upstream || {};
+  const backups = [
+    ...((local.backups || []).map((item) => ({ ...item, source: "Playground" }))),
+    ...((upstream.backups || []).map((item) => ({ ...item, source: "OCR API" }))),
+  ];
+  const paths = [local.path ? `Playground: ${local.path}` : "", upstream.path ? `OCR API: ${upstream.path}` : ""].filter(Boolean);
+  if (paths.length) {
+    const pathText = document.createElement("p");
+    pathText.className = "audit-paths";
+    pathText.textContent = paths.join(" · ");
+    adminEls.auditBackupList.appendChild(pathText);
+  }
+  if (!backups.length) {
+    return;
+  }
+  const list = document.createElement("div");
+  list.className = "audit-backup-chips";
+  backups.slice(0, 8).forEach((backup) => {
+    const item = document.createElement("span");
+    item.textContent = `${backup.source} ${backup.name}`;
+    list.appendChild(item);
+  });
+  adminEls.auditBackupList.appendChild(list);
+}
+
+function auditLogRow(entry) {
+  const row = document.createElement("article");
+  row.className = "audit-log-row";
+  row.dataset.status = String(entry.status_code || "");
+
+  const head = document.createElement("div");
+  head.className = "audit-log-head";
+
+  const status = document.createElement("span");
+  status.className = "audit-status";
+  status.textContent = String(entry.status_code || "-");
+  head.appendChild(status);
+
+  const title = document.createElement("strong");
+  title.textContent = `${entry.method || "-"} ${entry.path || ""}`;
+  head.appendChild(title);
+
+  const time = document.createElement("time");
+  time.textContent = formatTime(entry.timestamp);
+  head.appendChild(time);
+  row.appendChild(head);
+
+  const meta = document.createElement("div");
+  meta.className = "audit-meta";
+  [
+    entry.username ? `사용자 ${entry.username}` : "비로그인",
+    entry.role ? `권한 ${roleLabel(entry.role)}` : "",
+    entry.service ? `서비스 ${entry.service}` : "",
+    entry.source ? `출처 ${entry.source}` : "",
+    Number.isFinite(Number(entry.duration_ms)) ? `${entry.duration_ms}ms` : "",
+    entry.query ? `query ${entry.query}` : "",
+  ].filter(Boolean).forEach((text) => {
+    const span = document.createElement("span");
+    span.textContent = text;
+    meta.appendChild(span);
+  });
+  row.appendChild(meta);
+  return row;
+}
+
+async function backupAuditLogs() {
+  setAuditStatus("백업을 생성하는 중입니다...");
+  try {
+    await requestJson("api/admin/audit-logs/backup", { method: "POST" });
+    adminState.auditLogsLoaded = false;
+    await loadAuditLogs();
+    setAuditStatus("백업을 생성했습니다.");
+  } catch (error) {
+    setAuditStatus(error.message || "백업 생성에 실패했습니다.", true);
+  }
+}
+
+const IDLE_LOGOUT_MS = 30 * 60 * 1000;
+let idleLogoutTimer = null;
+
+function resetIdleLogoutTimer() {
+  if (idleLogoutTimer) {
+    window.clearTimeout(idleLogoutTimer);
+  }
+  idleLogoutTimer = window.setTimeout(logout, IDLE_LOGOUT_MS);
+}
+
+function installIdleLogoutTimer() {
+  ["click", "keydown", "mousemove", "scroll", "touchstart"].forEach((eventName) => {
+    document.addEventListener(eventName, resetIdleLogoutTimer, { passive: true });
+  });
+  resetIdleLogoutTimer();
+}
+
 function statusLabel(status) {
   return {
     active: "활성",
@@ -669,8 +836,12 @@ adminEls.overrideOnlyToggle.addEventListener("change", (event) => {
   adminState.overrideOnly = event.target.checked;
   applySettingsFilter();
 });
+adminEls.reloadAuditLogs?.addEventListener("click", () => loadAuditLogs());
+adminEls.backupAuditLogs?.addEventListener("click", backupAuditLogs);
+adminEls.auditLogLimit?.addEventListener("change", () => loadAuditLogs());
 adminEls.logoutButton.addEventListener("click", logout);
 
+installIdleLogoutTimer();
 loadMe();
 loadOverview();
 loadUsers();

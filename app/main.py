@@ -15,6 +15,7 @@ from app.db.session import initialize_schema
 from app.config import Settings
 from app.core.config import get_settings as get_runtime_settings
 from app.core.container import ApplicationContainer
+from app.services.audit_log import install_audit_logging
 
 
 def mount_extension_router(app: FastAPI, router: APIRouter) -> None:
@@ -48,6 +49,7 @@ def create_app(
         root_path=runtime_settings.normalized_root_path,
         lifespan=lifespan,
     )
+    install_audit_logging(app, service_name="app")
     app.state.container = resolved_container
     app.include_router(system_router)
     app.include_router(jobs_router)

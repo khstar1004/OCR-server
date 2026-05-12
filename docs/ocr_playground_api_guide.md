@@ -509,7 +509,9 @@ curl "http://127.0.0.1:18109/api/v1/workflows/executions/{execution_id}"
 
 설정 저장 위치는 기본적으로 `RUNTIME_CONFIG_PATH`입니다. 값이 비어 있으면 `OUTPUT_ROOT/_runtime_config/settings.json`에 저장합니다. Docker/k8s 배포에서는 `/data/runtime/runtime-config/settings.json`을 쓰도록 설정해 app, OCR API, playground가 같은 PVC의 값을 읽습니다.
 
-계정/세션 저장 위치는 `AUTH_STORE_PATH`입니다. Docker/k8s 기본값은 `/data/runtime/runtime-config/auth.json`입니다. 비밀번호는 PBKDF2 해시로 저장되고, 로그인 세션은 HttpOnly 쿠키로 관리됩니다.
+계정/세션 저장 위치는 `AUTH_STORE_PATH`입니다. Docker/k8s 기본값은 `/data/runtime/runtime-config/auth.json`입니다. 비밀번호는 SHA-256 기반 PBKDF2 해시로 저장되고, 로그인 세션은 HttpOnly 쿠키로 관리됩니다. 비밀번호는 9자 이상, 영문 대소문자/숫자/특수문자를 포함해야 하며 아이디/이름/부서명 포함, 동일문자 3회 반복, 3자리 이상 연속 숫자는 거부됩니다.
+
+비밀번호 변경 주기는 30일, 미접속 계정 차단 기준은 90일, 세션 무활동 제한은 30분입니다. 모든 API 호출은 본문 없이 경로/상태/사용자/소요시간 중심으로 `AUDIT_LOG_PATH` 또는 `AUTH_STORE_PATH` 옆 `audit/api_calls.jsonl`에 기록되며, `/playground/admin` 접근 로그에서 관리자만 조회하고 수동 백업할 수 있습니다. 로그는 ISO 주차 변경 시 자동 백업됩니다.
 
 계정 상태는 `pending`, `active`, `suspended`, `rejected`로 관리합니다. `suspend`와 `reject`는 해당 사용자의 기존 세션을 제거하므로, 이미 로그인한 사용자도 다음 요청부터 접근할 수 없습니다. 관리자 계정은 UI/API에서 정지 또는 반려할 수 없도록 보호합니다.
 

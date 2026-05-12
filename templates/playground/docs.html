@@ -268,6 +268,8 @@ images/page-0001-image-0001.png</code></pre>
             vLLM 모델 경로, <code>max-num-seqs</code>, context 길이, GPU 메모리, 이미지 pixel limit처럼
             <code>restart_required</code>인 값은 저장 후 vLLM Pod만 재시작하면 entrypoint가 저장 JSON을 읽어 반영합니다.
             계정 신청과 승인 상태는 <code>/data/runtime/runtime-config/auth.json</code>에 저장됩니다.
+            비밀번호 30일 변경 주기, 90일 미접속 계정 차단, 30분 무활동 로그아웃이 적용되고
+            API 접근 로그는 같은 runtime 저장소의 <code>audit/api_calls.jsonl</code>에 주 단위 백업과 함께 보관됩니다.
           </p>
 
           <h2 id="demo-ui">체험 UI</h2>

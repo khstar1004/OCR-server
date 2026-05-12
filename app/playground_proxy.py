@@ -10,7 +10,14 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from app.core.config import get_settings
-from app.services.auth_store import AUTH_COOKIE_NAME, current_user_from_request, get_auth_store, require_admin_user
+from app.services.audit_log import AuditLogStore
+from app.services.auth_store import (
+    AUTH_COOKIE_NAME,
+    current_user_from_request,
+    get_auth_store,
+    require_admin_user,
+    require_authenticated_user,
+)
 from app.services.runtime_config import get_runtime_config_store, runtime_config_value
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -31,6 +38,9 @@ def create_app() -> FastAPI:
         version="0.1.0",
         root_path=settings.normalized_root_path,
     )
+    from app.services.audit_log import install_audit_logging
+
+    install_audit_logging(app, service_name="playground-proxy")
 
     @app.get("/health")
     def health() -> dict[str, Any]:
@@ -39,6 +49,9 @@ def create_app() -> FastAPI:
     @app.get("/playground", response_class=HTMLResponse, include_in_schema=False)
     @app.get("/playground/", response_class=HTMLResponse, include_in_schema=False)
     def get_playground(request: Request) -> HTMLResponse:
+        user = current_user_from_request(request)
+        if not user:
+            return RedirectResponse(url=f"{_resource_prefixes(request)['playground']}/login", status_code=303)
         html = _PLAYGROUND_TEMPLATE.read_text(encoding="utf-8")
         html = html.replace("__PLAYGROUND_BASE__", _external_playground_base(request))
         links = _resource_links(request)
@@ -58,8 +71,10 @@ def create_app() -> FastAPI:
     @app.get("/playground/login", response_class=HTMLResponse, include_in_schema=False)
     def get_playground_login(request: Request) -> HTMLResponse:
         user = current_user_from_request(request)
-        if user and user.get("role") == "admin":
-            return RedirectResponse(url=_resource_links(request)["admin"]["url"], status_code=303)
+        if user:
+            links = _resource_links(request)
+            destination = links["admin"]["url"] if user.get("role") == "admin" else links["playground"]["url"]
+            return RedirectResponse(url=destination, status_code=303)
         return _render_docs_template(request, _PLAYGROUND_AUTH_TEMPLATE.read_text(encoding="utf-8"))
 
     @app.get("/playground/admin", response_class=HTMLResponse, include_in_schema=False)
@@ -157,6 +172,7 @@ def create_app() -> FastAPI:
                 username=str(payload.get("username") or ""),
                 password=str(payload.get("password") or ""),
                 display_name=str(payload.get("display_name") or ""),
+                department=str(payload.get("department") or ""),
                 email=str(payload.get("email") or ""),
                 reason=str(payload.get("reason") or ""),
             )
@@ -187,6 +203,21 @@ def create_app() -> FastAPI:
         )
         return response
 
+    @app.post("/playground/api/auth/change-password")
+    async def change_password(request: Request) -> dict[str, Any]:
+        payload = _json_object(await request.body())
+        try:
+            user = get_auth_store(get_settings()).change_password(
+                username=str(payload.get("username") or ""),
+                current_password=str(payload.get("current_password") or ""),
+                new_password=str(payload.get("new_password") or ""),
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+        return {"success": True, "user": user}
+
     @app.post("/playground/api/auth/logout")
     def logout_account(request: Request) -> JSONResponse:
         get_auth_store(get_settings()).delete_session(request.cookies.get(AUTH_COOKIE_NAME))
@@ -216,6 +247,33 @@ def create_app() -> FastAPI:
             "settings": settings_payload,
             "health": await get_playground_health(request),
             "capabilities": await get_playground_capabilities(request),
+        }
+
+    @app.get("/playground/api/admin/audit-logs")
+    async def proxy_admin_audit_logs(request: Request) -> dict[str, Any]:
+        require_admin_user(request)
+        limit = _query_int(request, "limit", default=200, minimum=1, maximum=1000)
+        local = AuditLogStore(get_settings()).read_entries(limit=limit)
+        upstream = await _fetch_upstream_json(request, "/playground/api/admin/audit-logs")
+        return _merge_audit_logs(local, upstream, limit=limit)
+
+    @app.post("/playground/api/admin/audit-logs/backup")
+    async def proxy_backup_admin_audit_logs(request: Request) -> dict[str, Any]:
+        require_admin_user(request)
+        local = AuditLogStore(get_settings()).force_backup()
+        upstream: dict[str, Any] = {}
+        try:
+            response = await _upstream_request(request, "POST", "/playground/api/admin/audit-logs/backup", content=b"")
+            if 200 <= response.status_code < 300:
+                payload = response.json()
+                upstream = payload if isinstance(payload, dict) else {}
+        except Exception:
+            upstream = {}
+        return {
+            "success": True,
+            "local": local,
+            "upstream": upstream,
+            "created": bool(local.get("created") or upstream.get("created")),
         }
 
     @app.post("/playground/api/admin/users/{user_id}/approve")
@@ -342,18 +400,22 @@ def create_app() -> FastAPI:
 
     @app.get("/playground/api/history")
     async def proxy_history(request: Request) -> Response:
+        require_authenticated_user(request)
         return await _proxy_to_upstream(request, "/playground/api/history")
 
     @app.post("/playground/api/convert")
     async def proxy_convert(request: Request) -> Response:
+        require_authenticated_user(request)
         return await _proxy_to_upstream(request, "/playground/api/convert")
 
     @app.post("/playground/api/convert/start")
     async def proxy_convert_start(request: Request) -> Response:
+        require_authenticated_user(request)
         return await _proxy_to_upstream(request, "/playground/api/convert/start")
 
     @app.get("/playground/api/convert/{request_id}")
     async def proxy_convert_result(request: Request, request_id: str) -> Response:
+        require_authenticated_user(request)
         return await _proxy_to_upstream(request, f"/playground/api/convert/{request_id}")
 
     @app.put("/playground/api/convert/{request_id}/blocks/{page_index}/{block_index}")
@@ -363,6 +425,7 @@ def create_app() -> FastAPI:
         page_index: int,
         block_index: int,
     ) -> Response:
+        require_authenticated_user(request)
         return await _proxy_to_upstream(
             request,
             f"/playground/api/convert/{request_id}/blocks/{page_index}/{block_index}",
@@ -370,10 +433,12 @@ def create_app() -> FastAPI:
 
     @app.get("/playground/api/images/{request_id}/{asset_name}")
     async def proxy_image(request: Request, request_id: str, asset_name: str) -> Response:
+        require_authenticated_user(request)
         return await _proxy_to_upstream(request, f"/playground/api/images/{request_id}/{asset_name}")
 
     @app.get("/playground/api/download/{request_id}")
     async def proxy_download(request: Request, request_id: str) -> Response:
+        require_authenticated_user(request)
         return await _proxy_to_upstream(request, f"/playground/api/download/{request_id}")
 
     return app
@@ -447,6 +512,36 @@ def _merge_runtime_settings(upstream: dict[str, Any], local: dict[str, Any]) -> 
     merged["values"] = values
     merged["specs"] = specs
     return merged
+
+
+def _merge_audit_logs(local: dict[str, Any], upstream: dict[str, Any], *, limit: int) -> dict[str, Any]:
+    entries = []
+    for source_name, payload in (("playground", local), ("ocr_service", upstream)):
+        source_entries = payload.get("entries") if isinstance(payload.get("entries"), list) else []
+        for entry in source_entries:
+            if not isinstance(entry, dict):
+                continue
+            normalized = dict(entry)
+            normalized.setdefault("source", source_name)
+            entries.append(normalized)
+    entries.sort(key=lambda item: str(item.get("timestamp") or ""), reverse=True)
+    visible = entries[:limit]
+    return {
+        "success": True,
+        "count": len(visible),
+        "limit": limit,
+        "entries": visible,
+        "local": {key: local.get(key) for key in ("path", "backup_dir", "backups")},
+        "upstream": {key: upstream.get(key) for key in ("path", "backup_dir", "backups")} if upstream else {},
+    }
+
+
+def _query_int(request: Request, name: str, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(str(request.query_params.get(name) or default))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(value, maximum))
 
 
 def _runtime_overview(payload: dict[str, Any]) -> dict[str, Any]:

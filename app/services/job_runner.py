@@ -10,15 +10,15 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.models import Article, ArticleImage, Job, Page, PdfFile, ProcessingLog
-from app.schemas.job import JobRunDailyRequest
+from app.schemas.job import ArticleResponse, JobRunDailyRequest
 from app.services.article_cluster import ArticleClusterer
-from app.services.news_delivery import NewsDeliveryClient
+from app.services.news_delivery import NewsDeliveryClient, NewsDeliveryError
 from app.services.file_scanner import FileScanner
 from app.services.job_options import normalize_job_ocr_options, select_items_by_job_page_options
 from app.services.ocr_engine import OCREngine
 from app.services.pdf_renderer import PdfRenderer
 from app.services.relevance_scorer import NationalAssemblyRelevanceScorer
-from app.services.result_builder import build_job_result
+from app.services.result_builder import build_job_result, build_page_articles
 from app.services.storage import OutputStorage
 from app.utils.json_utils import dataclass_to_dict
 
@@ -79,22 +79,7 @@ class JobRunner:
             job.finished_at = datetime.now(timezone.utc)
             self.db.commit()
             if job.status in {"completed", "completed_with_errors"} and job.total_articles > 0:
-                target_url = self.delivery.resolve_target_url(None)
-                if target_url:
-                    self._log_and_commit(job.id, None, None, "deliver", "running", f"sending articles to {target_url}")
-                    try:
-                        result = self.delivery.deliver_job_result(build_job_result(self.db, job))
-                        self._log_and_commit(
-                            job.id,
-                            None,
-                            None,
-                            "deliver",
-                            "completed",
-                            f"delivered={result.delivered} failed={result.failed}",
-                        )
-                    except Exception as exc:  # noqa: BLE001
-                        logger.exception("delivery failed: %s", exc)
-                        self._log_and_commit(job.id, None, None, "deliver", "failed", str(exc))
+                self._deliver_remaining_articles(job)
 
     def _run_job(self, job: Job) -> None:
         source_dir = Path(job.source_dir)
@@ -390,6 +375,7 @@ class JobRunner:
                 self._log(job.id, pdf_row.id, page_row.id, "persist", "completed", f"articles={len(articles)} images={cropped_images}")
                 self._log(job.id, pdf_row.id, page_row.id, "page", "completed", f"articles={len(articles)}")
                 self.db.commit()
+                self._deliver_page_articles(job, pdf_row, page_row)
             except Exception as exc:
                 page_failures += 1
                 page_row.parse_status = "failed"
@@ -402,6 +388,74 @@ class JobRunner:
         pdf_row.processed_at = datetime.now(timezone.utc)
         self._log(job.id, pdf_row.id, None, "persist", pdf_row.status, f"pages={pdf_row.page_count}")
         self.db.commit()
+
+    def _deliver_page_articles(self, job: Job, pdf_row: PdfFile, page_row: Page) -> None:
+        articles = build_page_articles(self.db, job, pdf_row, page_row)
+        self._deliver_articles(
+            job,
+            pdf_row,
+            page_row,
+            articles,
+            empty_message=f"page={page_row.page_number} has no articles to deliver",
+            running_message=f"sending page={page_row.page_number} articles={len(articles)}",
+        )
+
+    def _deliver_remaining_articles(self, job: Job) -> None:
+        result = build_job_result(self.db, job)
+        pending_articles = [
+            article
+            for file_result in result.files
+            for article in file_result.articles
+            if not str(article.delivery_status or "").strip()
+        ]
+        self._deliver_articles(
+            job,
+            None,
+            None,
+            pending_articles,
+            empty_message="no remaining articles to deliver",
+            running_message=f"sending remaining articles={len(pending_articles)}",
+        )
+
+    def _deliver_articles(
+        self,
+        job: Job,
+        pdf_row: PdfFile | None,
+        page_row: Page | None,
+        articles: list[ArticleResponse],
+        *,
+        empty_message: str,
+        running_message: str,
+    ) -> None:
+        target_url = self.delivery.resolve_target_url(None)
+        if not target_url:
+            return
+        if not articles:
+            self._log_and_commit(job.id, pdf_row.id if pdf_row else None, page_row.id if page_row else None, "deliver", "skipped", empty_message)
+            return
+
+        location = f"{running_message} to {target_url}"
+        self._log_and_commit(job.id, pdf_row.id if pdf_row else None, page_row.id if page_row else None, "deliver", "running", location)
+        try:
+            result = self.delivery.deliver_articles(articles)
+        except NewsDeliveryError as exc:
+            logger.exception("delivery failed: %s", exc)
+            self._log_and_commit(job.id, pdf_row.id if pdf_row else None, page_row.id if page_row else None, "deliver", "failed", exc.message)
+            return
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("delivery failed: %s", exc)
+            self._log_and_commit(job.id, pdf_row.id if pdf_row else None, page_row.id if page_row else None, "deliver", "failed", str(exc))
+            return
+
+        status = "completed" if result.failed == 0 else "failed"
+        self._log_and_commit(
+            job.id,
+            pdf_row.id if pdf_row else None,
+            page_row.id if page_row else None,
+            "deliver",
+            status,
+            f"delivered={result.delivered} failed={result.failed}",
+        )
 
     def _build_page_quality(self, layout: Any, *, article_count: int) -> dict[str, Any]:
         text_chunks = [

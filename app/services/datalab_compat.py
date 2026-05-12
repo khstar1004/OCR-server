@@ -206,8 +206,10 @@ class DatalabCompatService:
         limit: int = 50,
         playground_only: bool = False,
         request_kind: str | None = None,
+        owner_user_id: str | None = None,
     ) -> dict[str, Any]:
         safe_limit = max(1, min(int(limit), 500))
+        owner_filter = str(owner_user_id or "").strip()
         items: list[dict[str, Any]] = []
         for record_path in self.requests_dir.glob("*/record.json"):
             try:
@@ -218,6 +220,8 @@ class DatalabCompatService:
             if playground_only and meta.get("playground") is not True:
                 continue
             if request_kind and str(record.get("request_kind") or "") != request_kind:
+                continue
+            if owner_filter and str(meta.get("owner_user_id") or "") != owner_filter:
                 continue
             items.append(self._request_history_item(record, fallback_request_id=record_path.parent.name))
 
@@ -232,6 +236,7 @@ class DatalabCompatService:
             "limit": safe_limit,
             "playground_only": playground_only,
             "request_kind": request_kind,
+            "owner_user_id": owner_filter or None,
             "items": visible_items,
             "versions": self.versions(),
         }
@@ -573,6 +578,9 @@ class DatalabCompatService:
             "created_at": created_at,
             "updated_at": updated_at,
             "file_name": file_name,
+            "owner_user_id": str(meta.get("owner_user_id") or ""),
+            "owner_username": str(meta.get("owner_username") or ""),
+            "owner_display_name": str(meta.get("owner_display_name") or ""),
             "input_source": str(meta.get("input_source") or ""),
             "mode": str(metadata.get("mode") or meta.get("mode") or ""),
             "output_format": str(result.get("output_format") or meta.get("output_format") or ""),

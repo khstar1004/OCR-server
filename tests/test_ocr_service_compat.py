@@ -7,6 +7,7 @@ import json
 import sys
 import zipfile
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import sleep
 from types import SimpleNamespace
@@ -66,7 +67,7 @@ def _install_fake_fitz(monkeypatch, *, page_count: int = 3) -> None:
 def _login_admin(client: TestClient) -> None:
     response = client.post(
         "/playground/api/auth/login",
-        json={"username": "admin", "password": "roqkfrhk1!"},
+        json={"username": "admin", "password": "Roqkfrhk1!"},
     )
     assert response.status_code == 200
     assert response.json()["user"]["role"] == "admin"
@@ -141,6 +142,22 @@ def _compat_client(tmp_path: Path, monkeypatch, *, root_path: str = ""):
         app.state.ocr_engine = stub
         app.state.datalab_compat.engine = stub
         yield client
+
+
+def _auth_store_path(tmp_path: Path) -> Path:
+    return tmp_path / "output" / "_runtime_config" / "auth.json"
+
+
+def _read_auth_payload(tmp_path: Path) -> dict:
+    return json.loads(_auth_store_path(tmp_path).read_text(encoding="utf-8"))
+
+
+def _write_auth_payload(tmp_path: Path, payload: dict) -> None:
+    _auth_store_path(tmp_path).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def _user_record(payload: dict, username: str) -> dict:
+    return next(user for user in payload["users"].values() if user["username"] == username)
 
 
 def test_compat_health_and_ocr_result_check(tmp_path: Path, monkeypatch) -> None:
@@ -265,7 +282,7 @@ def test_playground_account_signup_requires_admin_approval(tmp_path: Path, monke
             "/playground/api/auth/signup",
             json={
                 "username": "analyst1",
-                "password": "strongpass1",
+                "password": "Strongpass9!",
                 "display_name": "분석관",
                 "email": "analyst@example.test",
                 "reason": "OCR 품질 확인",
@@ -275,7 +292,7 @@ def test_playground_account_signup_requires_admin_approval(tmp_path: Path, monke
         user_id = signup.json()["user"]["id"]
         pending_login = client.post(
             "/playground/api/auth/login",
-            json={"username": "analyst1", "password": "strongpass1"},
+            json={"username": "analyst1", "password": "Strongpass9!"},
         )
         assert pending_login.status_code == 403
 
@@ -295,7 +312,7 @@ def test_playground_account_signup_requires_admin_approval(tmp_path: Path, monke
 
         active_login = client.post(
             "/playground/api/auth/login",
-            json={"username": "analyst1", "password": "strongpass1"},
+            json={"username": "analyst1", "password": "Strongpass9!"},
         )
         assert active_login.status_code == 200
         assert active_login.json()["user"]["role"] == "user"
@@ -309,7 +326,7 @@ def test_playground_account_signup_requires_admin_approval(tmp_path: Path, monke
         client.post("/playground/api/auth/logout")
         suspended_login = client.post(
             "/playground/api/auth/login",
-            json={"username": "analyst1", "password": "strongpass1"},
+            json={"username": "analyst1", "password": "Strongpass9!"},
         )
         assert suspended_login.status_code == 403
 
@@ -317,6 +334,247 @@ def test_playground_account_signup_requires_admin_approval(tmp_path: Path, monke
         activate = client.post(f"/playground/api/admin/users/{user_id}/activate")
         assert activate.status_code == 200
         assert activate.json()["user"]["status"] == "active"
+
+
+def test_playground_password_policy_expiry_and_change_flow(tmp_path: Path, monkeypatch) -> None:
+    with _compat_client(tmp_path, monkeypatch) as client:
+        too_short = client.post(
+            "/playground/api/auth/signup",
+            json={"username": "policy1", "password": "Short1!", "display_name": "정책"},
+        )
+        assert too_short.status_code == 400
+        assert "9자" in too_short.json()["detail"]
+
+        contains_profile = client.post(
+            "/playground/api/auth/signup",
+            json={
+                "username": "analyst1",
+                "password": "Analyst19!",
+                "display_name": "분석관",
+                "department": "정보",
+            },
+        )
+        assert contains_profile.status_code == 400
+        assert "아이디" in contains_profile.json()["detail"]
+
+        sequential_digits = client.post(
+            "/playground/api/auth/signup",
+            json={"username": "policy2", "password": "GoodPass123!", "display_name": "정책"},
+        )
+        assert sequential_digits.status_code == 400
+        assert "연속 숫자" in sequential_digits.json()["detail"]
+
+        signup = client.post(
+            "/playground/api/auth/signup",
+            json={
+                "username": "analyst1",
+                "password": "Strongpass9!",
+                "display_name": "분석관",
+                "department": "AI분석",
+            },
+        )
+        assert signup.status_code == 200
+        user_id = signup.json()["user"]["id"]
+        stored = _read_auth_payload(tmp_path)
+        user = _user_record(stored, "analyst1")
+        assert user["password_hash"].startswith("pbkdf2_sha256$")
+        assert "Strongpass9!" not in _auth_store_path(tmp_path).read_text(encoding="utf-8")
+
+        _login_admin(client)
+        assert client.post(f"/playground/api/admin/users/{user_id}/approve").status_code == 200
+        client.post("/playground/api/auth/logout")
+
+        expired_at = (datetime.now(timezone.utc) - timedelta(days=31)).isoformat()
+        stored = _read_auth_payload(tmp_path)
+        _user_record(stored, "analyst1")["password_changed_at"] = expired_at
+        _write_auth_payload(tmp_path, stored)
+
+        expired_login = client.post(
+            "/playground/api/auth/login",
+            json={"username": "analyst1", "password": "Strongpass9!"},
+        )
+        assert expired_login.status_code == 403
+        assert "비밀번호 변경" in expired_login.json()["detail"]
+
+        invalid_change = client.post(
+            "/playground/api/auth/change-password",
+            json={
+                "username": "analyst1",
+                "current_password": "Strongpass9!",
+                "new_password": "GoodPass123!",
+            },
+        )
+        assert invalid_change.status_code == 400
+        assert "연속 숫자" in invalid_change.json()["detail"]
+
+        changed = client.post(
+            "/playground/api/auth/change-password",
+            json={
+                "username": "analyst1",
+                "current_password": "Strongpass9!",
+                "new_password": "Freshpass9!",
+            },
+        )
+        assert changed.status_code == 200
+        assert changed.json()["user"]["password_expires_at"]
+        assert client.post(
+            "/playground/api/auth/login",
+            json={"username": "analyst1", "password": "Strongpass9!"},
+        ).status_code == 401
+        assert client.post(
+            "/playground/api/auth/login",
+            json={"username": "analyst1", "password": "Freshpass9!"},
+        ).status_code == 200
+
+
+def test_playground_inactive_account_and_idle_session_are_blocked(tmp_path: Path, monkeypatch) -> None:
+    with _compat_client(tmp_path, monkeypatch) as client:
+        signup = client.post(
+            "/playground/api/auth/signup",
+            json={"username": "staleuser", "password": "Strongpass9!", "display_name": "휴면사용자"},
+        )
+        assert signup.status_code == 200
+        user_id = signup.json()["user"]["id"]
+        _login_admin(client)
+        assert client.post(f"/playground/api/admin/users/{user_id}/approve").status_code == 200
+        client.post("/playground/api/auth/logout")
+
+        assert client.post(
+            "/playground/api/auth/login",
+            json={"username": "staleuser", "password": "Strongpass9!"},
+        ).status_code == 200
+        client.post("/playground/api/auth/logout")
+
+        stale_at = (datetime.now(timezone.utc) - timedelta(days=91)).isoformat()
+        stored = _read_auth_payload(tmp_path)
+        stale_user = _user_record(stored, "staleuser")
+        stale_user["last_login_at"] = stale_at
+        stale_user["password_changed_at"] = datetime.now(timezone.utc).isoformat()
+        _write_auth_payload(tmp_path, stored)
+
+        stale_login = client.post(
+            "/playground/api/auth/login",
+            json={"username": "staleuser", "password": "Strongpass9!"},
+        )
+        assert stale_login.status_code == 403
+        assert "90일" in stale_login.json()["detail"]
+        stored = _read_auth_payload(tmp_path)
+        stale_user = _user_record(stored, "staleuser")
+        assert stale_user["status"] == "suspended"
+        assert stale_user["suspended_reason"] == "inactive_90_days"
+
+        _login_admin(client)
+        assert client.post(f"/playground/api/admin/users/{user_id}/activate").status_code == 200
+        client.post("/playground/api/auth/logout")
+        assert client.post(
+            "/playground/api/auth/login",
+            json={"username": "staleuser", "password": "Strongpass9!"},
+        ).status_code == 200
+        client.post("/playground/api/auth/logout")
+
+        _login_admin(client)
+        stored = _read_auth_payload(tmp_path)
+        old_seen = (datetime.now(timezone.utc) - timedelta(minutes=31)).isoformat()
+        for session in stored["sessions"].values():
+            session["last_seen_at"] = old_seen
+        _write_auth_payload(tmp_path, stored)
+
+        assert client.get("/playground/api/admin/users").status_code == 401
+
+
+def test_playground_audit_logs_and_manual_backup(tmp_path: Path, monkeypatch) -> None:
+    with _compat_client(tmp_path, monkeypatch) as client:
+        _login_admin(client)
+        assert client.get("/playground/api/history?limit=5&token=secret").status_code == 200
+
+        logs = client.get("/playground/api/admin/audit-logs?limit=50")
+        assert logs.status_code == 200
+        entries = logs.json()["entries"]
+        history_entry = next(entry for entry in entries if entry["path"] == "/playground/api/history")
+        assert history_entry["username"] == "admin"
+        assert "secret" not in history_entry.get("query", "")
+        assert "token=%2A%2A%2A" in history_entry.get("query", "")
+
+        backup = client.post("/playground/api/admin/audit-logs/backup")
+        assert backup.status_code == 200
+        assert backup.json()["created"] is True
+        refreshed = client.get("/playground/api/admin/audit-logs?limit=5")
+        assert refreshed.json()["backups"]
+
+
+def test_audit_log_rotates_weekly_backup(tmp_path: Path, monkeypatch) -> None:
+    _reset_app_modules()
+    monkeypatch.setenv("AUTH_STORE_PATH", str(tmp_path / "auth.json"))
+    config = importlib.import_module("app.core.config")
+    audit_log = importlib.import_module("app.services.audit_log")
+    store = audit_log.AuditLogStore(config.Settings())
+
+    first_week = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    second_week = first_week + timedelta(days=8)
+    store.append({"timestamp": first_week.isoformat(), "event": "api_call", "path": "/api/old"}, now=first_week)
+    store.append({"timestamp": second_week.isoformat(), "event": "api_call", "path": "/api/new"}, now=second_week)
+
+    backups = store.list_backups()
+    assert backups
+    assert "/api/old" in Path(backups[0]["path"]).read_text(encoding="utf-8")
+    active_entries = store.read_entries(limit=10)["entries"]
+    assert [entry["path"] for entry in active_entries] == ["/api/new"]
+
+
+def test_playground_user_jobs_are_separated(tmp_path: Path, monkeypatch) -> None:
+    with _compat_client(tmp_path, monkeypatch) as client:
+        users = []
+        for username in ("analyst1", "analyst2"):
+            signup = client.post(
+                "/playground/api/auth/signup",
+                json={"username": username, "password": "Strongpass9!", "display_name": username},
+            )
+            assert signup.status_code == 200
+            users.append(signup.json()["user"])
+
+        _login_admin(client)
+        for user in users:
+            assert client.post(f"/playground/api/admin/users/{user['id']}/approve").status_code == 200
+        client.post("/playground/api/auth/logout")
+
+        login_one = client.post(
+            "/playground/api/auth/login",
+            json={"username": "analyst1", "password": "Strongpass9!"},
+        )
+        assert login_one.status_code == 200
+        first = client.post(
+            "/playground/api/convert",
+            files={"file": ("first.png", _png_bytes(), "image/png")},
+            data={"mode": "balanced", "skip_cache": "true"},
+        )
+        assert first.status_code == 200
+        first_request_id = first.json()["request_id"]
+        first_history = client.get("/playground/api/history").json()
+        assert first_request_id in {item["request_id"] for item in first_history["items"]}
+        client.post("/playground/api/auth/logout")
+
+        login_two = client.post(
+            "/playground/api/auth/login",
+            json={"username": "analyst2", "password": "Strongpass9!"},
+        )
+        assert login_two.status_code == 200
+        second_history = client.get("/playground/api/history").json()
+        assert first_request_id not in {item["request_id"] for item in second_history["items"]}
+        assert client.get(f"/playground/api/convert/{first_request_id}").status_code == 404
+        second = client.post(
+            "/playground/api/convert",
+            files={"file": ("second.png", _png_bytes(), "image/png")},
+            data={"mode": "balanced", "skip_cache": "true"},
+        )
+        assert second.status_code == 200
+        second_request_id = second.json()["request_id"]
+        assert second_request_id in {item["request_id"] for item in client.get("/playground/api/history").json()["items"]}
+        client.post("/playground/api/auth/logout")
+
+        _login_admin(client)
+        all_history = client.get("/playground/api/history?include_all_users=true").json()
+        all_request_ids = {item["request_id"] for item in all_history["items"]}
+        assert {first_request_id, second_request_id} <= all_request_ids
 
 
 def test_compat_marker_and_thumbnails(tmp_path: Path, monkeypatch) -> None:
@@ -347,6 +605,15 @@ def test_compat_marker_and_thumbnails(tmp_path: Path, monkeypatch) -> None:
 
 def test_playground_convert_and_download_include_images(tmp_path: Path, monkeypatch) -> None:
     with _compat_client(tmp_path, monkeypatch) as client:
+        redirected = client.get("/playground", follow_redirects=False)
+        assert redirected.status_code == 303
+        assert redirected.headers["location"] == "/playground/login"
+        assert client.post(
+            "/playground/api/convert/start",
+            files={"file": ("page.png", _png_bytes(), "image/png")},
+            data={"page_range": "0-9", "mode": "balanced", "skip_cache": "true"},
+        ).status_code == 401
+        _login_admin(client)
         page = client.get("/playground")
         assert page.status_code == 200
         assert "Army-OCR Playground" in page.text
@@ -504,6 +771,7 @@ def test_playground_convert_and_download_include_images(tmp_path: Path, monkeypa
 
 def test_playground_convert_status_returns_partial_pages(tmp_path: Path, monkeypatch) -> None:
     with _compat_client(tmp_path, monkeypatch) as client:
+        _login_admin(client)
         domain_types = importlib.import_module("app.domain.types")
         image_path = tmp_path / "partial-page.png"
         image_path.write_bytes(_png_bytes())
@@ -587,6 +855,7 @@ def test_playground_convert_status_returns_partial_pages(tmp_path: Path, monkeyp
 
 def test_playground_block_edits_persist_in_result_and_zip(tmp_path: Path, monkeypatch) -> None:
     with _compat_client(tmp_path, monkeypatch) as client:
+        _login_admin(client)
         response = client.post(
             "/playground/api/convert",
             files={"file": ("page.png", _png_bytes(), "image/png")},
@@ -647,6 +916,7 @@ def test_playground_block_edits_persist_in_result_and_zip(tmp_path: Path, monkey
 
 def test_playground_table_edit_can_merge_adjacent_text_blocks(tmp_path: Path, monkeypatch) -> None:
     with _compat_client(tmp_path, monkeypatch) as client:
+        _login_admin(client)
         domain_types = importlib.import_module("app.domain.types")
         image_path = tmp_path / "table-like-page.png"
         image_path.write_bytes(_png_bytes())
@@ -754,6 +1024,7 @@ def test_playground_defaults_to_all_pdf_pages_and_balanced_dpi(tmp_path: Path, m
     _install_fake_fitz(monkeypatch, page_count=3)
 
     with _compat_client(tmp_path, monkeypatch) as client:
+        _login_admin(client)
         response = client.post(
             "/playground/api/convert",
             files={"file": ("multi.pdf", b"%PDF-1.4\n", "application/pdf")},
@@ -776,6 +1047,7 @@ def test_playground_defaults_to_all_pdf_pages_and_balanced_dpi(tmp_path: Path, m
 
 def test_playground_history_marks_stale_processing_success_as_complete(tmp_path: Path, monkeypatch) -> None:
     with _compat_client(tmp_path, monkeypatch) as client:
+        _login_admin(client)
         response = client.post(
             "/playground/api/convert",
             files={"file": ("page.png", _png_bytes(), "image/png")},
@@ -800,6 +1072,9 @@ def test_playground_history_marks_stale_processing_success_as_complete(tmp_path:
 
 def test_playground_admin_page_requires_login(tmp_path: Path, monkeypatch) -> None:
     with _compat_client(tmp_path, monkeypatch) as client:
+        playground_redirect = client.get("/playground", follow_redirects=False)
+        assert playground_redirect.status_code == 303
+        assert playground_redirect.headers["location"] == "/playground/login"
         redirected = client.get("/playground/admin", follow_redirects=False)
         assert redirected.status_code == 303
         assert redirected.headers["location"] == "/playground/login"
@@ -814,6 +1089,10 @@ def test_playground_admin_page_requires_login(tmp_path: Path, monkeypatch) -> No
 
 def test_playground_links_follow_root_path_when_forwarded_prefix_is_missing(tmp_path: Path, monkeypatch) -> None:
     with _compat_client(tmp_path, monkeypatch, root_path="/a-cong-ocr-playground") as client:
+        redirected = client.get("/playground", follow_redirects=False)
+        assert redirected.status_code == 303
+        assert redirected.headers["location"] == "/a-cong-ocr-playground/login"
+        _login_admin(client)
         page = client.get("/playground")
         assert page.status_code == 200
         assert '<base href="/a-cong-ocr-playground/">' in page.text

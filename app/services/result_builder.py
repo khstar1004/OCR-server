@@ -248,6 +248,19 @@ def build_job_result(db: Session, job: Job) -> JobResultResponse:
     return JobResultResponse(job_id=job.job_key, status=job.status, files=files)
 
 
+def build_page_articles(db: Session, job: Job, pdf_file: PdfFile, page: Page) -> list[ArticleResponse]:
+    storage = OutputStorage()
+    articles = list(
+        db.scalars(
+            select(Article)
+            .where(Article.page_id == page.id)
+            .options(selectinload(Article.images), selectinload(Article.page))
+            .order_by(Article.article_order)
+        )
+    )
+    return [_build_article_response(storage, job.job_key, pdf_file.file_name, article) for article in articles]
+
+
 def _build_article_response(storage: OutputStorage, job_key: str, pdf_name: str, article: Article) -> ArticleResponse:
     bundle_dir = storage.resolve_article_bundle_path(
         job_key,

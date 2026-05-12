@@ -36,6 +36,7 @@
         <button type="button" class="admin-nav-item active" data-admin-pane="overviewPane">대시보드</button>
         <button type="button" class="admin-nav-item" data-admin-pane="usersPane">계정 승인</button>
         <button type="button" class="admin-nav-item" data-admin-pane="settingsPane">운영 설정</button>
+        <button type="button" class="admin-nav-item" data-admin-pane="auditPane">접근 로그</button>
       </nav>
       <div class="admin-sidebar-links">
         <a href="__PLAYGROUND_URL__">Playground</a>
@@ -74,6 +75,10 @@
             <span>Playground</span>
             <strong>열기</strong>
           </a>
+          <button type="button" class="admin-quick-action" data-quick-pane="auditPane">
+            <span>API 호출 로그</span>
+            <strong>로그 보기</strong>
+          </button>
         </div>
         <div class="admin-card-grid">
           <article class="admin-stat-card">
@@ -242,6 +247,33 @@
             <span id="adminSettingsStatus" class="status-text"></span>
           </div>
         </form>
+      </section>
+
+      <section id="auditPane" class="admin-pane" hidden>
+        <div class="admin-section-head">
+          <div>
+            <h2>접근 로그</h2>
+            <p>API 호출, 계정 처리, 결과 조회 이력을 확인합니다.</p>
+          </div>
+          <div class="admin-head-actions">
+            <button type="button" id="backupAuditLogs">주간 백업 생성</button>
+            <button type="button" id="reloadAuditLogs">새로고침</button>
+          </div>
+        </div>
+        <div class="admin-filter-bar audit-filter-bar">
+          <label>
+            <span>표시 개수</span>
+            <select id="auditLogLimit">
+              <option value="100">100개</option>
+              <option value="200" selected>200개</option>
+              <option value="500">500개</option>
+              <option value="1000">1000개</option>
+            </select>
+          </label>
+        </div>
+        <div id="auditBackupList" class="audit-backup-list"></div>
+        <div id="auditLogList" class="audit-log-list" aria-live="polite"></div>
+        <p id="auditLogStatus" class="status-text"></p>
       </section>
     </main>
   </div>
